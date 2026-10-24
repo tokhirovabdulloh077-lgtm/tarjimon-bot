@@ -428,35 +428,47 @@ def _create_connector() -> aiohttp.TCPConnector:
 
 
 async def _call_gemini_ai(session: aiohttp.ClientSession, text: str, api_key: str) -> Optional[Tuple[str, str, str]]:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     prompt = (
-        "Siz o'zbek va ingliz tillarida eng tajribali, tabiiy, zamonaviy so'zlashuvchi professional tarjimonsiz.\n"
-        "Qoidalar:\n"
-        "1. Agar matn o'zbek tilida bo'lsa, uni ingliz tiliga tabiiy jonli so'zlashuv uslubida tarjima qiling.\n"
-        "2. Agar matn chet tilida bo'lsa, uni o'zbek tiliga o'giring. Aslo quruq, kitobiy yoki so'zma-so'z tarjima qilmang! Odamlar ko'chada, do'stlar orasida qanday tabiiy gaplashsa, xuddi shunday tirik tilda tarjima qiling. Sleng va idiomalarni o'zbekcha jonli ma'nosiga moslang.\n"
-        "3. FAQAT tarjimani qaytaring, hech qanday qo'shimcha so'z, izoh yoki tushuntirish yozmang.\n\n"
+        "Siz o'zbek va ingliz tillarida eng mohir, tajribali, tabiiy so'zlashuvchi professional tarjimonsiz.\n"
+        "QOIDALAR:\n"
+        "1. Agar matn inglizcha yoki boshqa tilda bo'lsa, uni O'zbek tiliga o'giring. So'zma-so'z emas, o'zbek tilida qanday chiroyli, tabiiy, ravon yangrasa xuddi shunday jonli tilda tarjima qiling. Sleng va idiomalarni o'zbekcha ekvivalentlariga moslang.\n"
+        "2. Agar matn o'zbekcha bo'lsa, uni Ingliz tiliga tabiiy, ravon qilib o'giring.\n"
+        "3. FAQAT tarjima matnini qaytaring, hech qanday qo'shimcha so'z, sarlavha, izoh yoki tushuntirish yozmang.\n\n"
         f"Matn:\n{text}"
     )
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.35, "maxOutputTokens": 800},
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 2048},
     }
-    try:
-        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-            if resp.status == 200:
-                data = await resp.json(content_type=None)
-                candidates = data.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    if parts and "text" in parts[0]:
-                        tr = parts[0]["text"].strip()
-                        if tr:
-                            is_uz = is_likely_uzbek(text)
-                            src_l = "uz" if is_uz else "en"
-                            dst_l = "en" if is_uz else "uz"
-                            return tr, src_l, dst_l
-    except Exception as e:
-        logger.warning(f"Gemini AI error: {e}")
+
+    # Supported model endpoints in priority order
+    models_to_try = [
+        "gemini-2.5-flash",
+        "gemini-flash-latest",
+        "gemini-2.5-flash-lite",
+        "gemini-pro-latest",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+    ]
+
+    for model_name in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+        try:
+            async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=12)) as resp:
+                if resp.status == 200:
+                    data = await resp.json(content_type=None)
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts and "text" in parts[0]:
+                            tr = parts[0]["text"].strip()
+                            if tr:
+                                is_uz = is_likely_uzbek(text)
+                                src_l = "uz" if is_uz else "en"
+                                dst_l = "en" if is_uz else "uz"
+                                return tr, src_l, dst_l
+        except Exception as e:
+            logger.warning(f"Gemini AI ({model_name}) error: {e}")
     return None
 
 

@@ -39,7 +39,7 @@ logger = logging.getLogger("tarjimon_bot")
 
 router = Router()
 BOT_USERNAME: str = ""
-DEPLOY_VERSION = "v5.3-ai"
+DEPLOY_VERSION = "v5.4-gemini2.5"
 
 
 @router.message(CommandStart())
