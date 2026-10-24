@@ -1,16 +1,13 @@
 import asyncio
 import logging
 import os
-from typing import List
-
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ChatType, ParseMode
+from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     BotCommand,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
     InlineQuery,
     InlineQueryResultArticle,
     InputTextMessageContent,
@@ -55,7 +52,6 @@ async def handle_translation(message: Message) -> None:
     if not text:
         return
 
-    # In groups, if message starts with '/', ignore unknown commands
     if text.startswith("/"):
         return
 
@@ -120,12 +116,31 @@ async def inline_translate(inline_query: InlineQuery) -> None:
         pass
 
 
+async def handle_ping(request: web.Request) -> web.Response:
+    return web.Response(text="Tarjimon bot is running!")
+
+
+async def start_web_server() -> None:
+    """Run a small dummy HTTP server so Render Web Service health-check passes."""
+    port = int(os.getenv("PORT", 8080))
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"Health-check server running on port {port}")
+
+
 async def main() -> None:
     global BOT_USERNAME
     token = os.getenv("BOT_TOKEN", "").strip()
     if not token or token == "YOUR_BOT_TOKEN_HERE":
         logger.error("BOT_TOKEN topilmadi! .env fayliga BotFather tokenini kiriting.")
         return
+
+    # Start health-check server for Render Web Service (Free Tier)
+    await start_web_server()
 
     bot = Bot(
         token=token,
