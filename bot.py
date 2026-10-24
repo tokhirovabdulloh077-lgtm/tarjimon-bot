@@ -27,6 +27,7 @@ logger = logging.getLogger("tarjimon_bot")
 
 router = Router()
 BOT_USERNAME: str = ""
+DEPLOY_VERSION = "v5.0-multi"
 
 
 @router.message(CommandStart())
@@ -104,7 +105,7 @@ async def inline_translate(inline_query: InlineQuery) -> None:
 
 
 async def handle_ping(request: web.Request) -> web.Response:
-    return web.Response(text="Tarjimon bot is live and healthy!")
+    return web.Response(text=f"Tarjimon bot {DEPLOY_VERSION} is live and healthy!")
 
 
 async def start_web_server() -> None:
@@ -117,6 +118,29 @@ async def start_web_server() -> None:
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     logger.info(f"Health-check server running on port {port}")
+
+
+async def run_startup_diagnostics(bot: Bot) -> None:
+    try:
+        r1 = await smart_translate("you are idiot")
+        r2 = await smart_translate("what should we do")
+        r3 = await smart_translate("nima gap")
+        r4 = await smart_translate("Привет, как дела?")
+        diag = (
+            f"🇺🇿🇬🇧 {DEPLOY_VERSION} | "
+            f"1:{r1['translated']} ({r1['src_lang']}) | "
+            f"2:{r2['translated']} | "
+            f"3:{r3['translated']}"
+        )[:118]
+        await bot.set_my_short_description(short_description=diag)
+        logger.info(f"Startup diagnostics passed: {diag} | 4:{r4['translated']}")
+    except Exception as e:
+        err_msg = f"⚠️ {DEPLOY_VERSION} ERR: {type(e).__name__}: {str(e)}"[:118]
+        try:
+            await bot.set_my_short_description(short_description=err_msg)
+        except Exception:
+            pass
+        logger.exception("Startup diagnostics failed")
 
 
 async def main() -> None:
@@ -143,7 +167,8 @@ async def main() -> None:
             BotCommand(command="help", description="Yordam va qo'llanma"),
         ]
     )
-    logger.info(f"Tarjimon bot ishga tushdi: @{me.username} ({me.full_name})")
+    await run_startup_diagnostics(bot)
+    logger.info(f"Tarjimon bot ishga tushdi: @{me.username} ({me.full_name}) [{DEPLOY_VERSION}]")
     await dp.start_polling(bot)
 
 
