@@ -3,6 +3,10 @@ import html
 import logging
 import os
 import re
+import socket
+import ssl
+import aiohttp
+import certifi
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
@@ -19,6 +23,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from dotenv import load_dotenv
 
 from database import (
+    DEFAULT_GEMINI_KEY,
     get_all_user_ids,
     get_recent_users,
     get_setting,
@@ -40,8 +45,26 @@ logger = logging.getLogger("tarjimon_bot")
 
 router = Router()
 BOT_USERNAME: str = ""
-DEPLOY_VERSION = "v5.6-webhook"
-DEFAULT_GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
+DEPLOY_VERSION = "v6.0-cloud"
+
+
+async def _ensure_user_and_check_admin(message: Message) -> bool:
+    if not message.from_user:
+        return False
+    u = message.from_user
+    await upsert_user(
+        user_id=u.id,
+        first_name=u.first_name or "",
+        last_name=u.last_name or "",
+        username=u.username or "",
+        increment_count=False,
+    )
+    return await is_admin(
+        user_id=u.id,
+        first_name=u.first_name or "",
+        last_name=u.last_name or "",
+        username=u.username or "",
+    )
 
 
 @router.message(CommandStart())
@@ -58,7 +81,7 @@ async def cmd_start(message: Message) -> None:
     text = (
         "👋 <b>Assalomu alaykum! O'zbekcha Tarjimon botiga xush kelibsiz!</b>\n\n"
         "Menga istalgan tilda (ingliz, rus, turk, nemis, arab, hind, xitoy va boshqa har qanday tilda) "
-        "matn yuboring — men uni <b>O'zbek tiliga</b> tarjima qilib beraman! 🇺🇿\n\n"
+        "matn yuboring — men uni <b>O'zbek tiliga</b> (adabiy, so'zlashuv yoki sleng uslubida) aniq tarjima qilib beraman! 🇺🇿\n\n"
         "💡 <i>Agar o'zbek tilida yozsangiz, uni ingliz tiliga o'girib beraman! 🇬🇧</i>\n\n"
         "✍️ <b>Istalgan so'z yoki gap yuborib sinab ko'ring!</b>"
     )
@@ -72,20 +95,20 @@ async def cmd_help(message: Message) -> None:
 
 @router.message(Command("stat", "admin"))
 async def cmd_stat(message: Message) -> None:
-    if not message.from_user:
-        return
-    is_adm = await is_admin(message.from_user.id)
-    if not is_adm:
+    if not await _ensure_user_and_check_admin(message):
         await message.reply("🔒 <i>Kechirasiz, bu buyruq faqat bot admini uchun.</i>")
         return
 
     stats = await get_stats()
+    current_key = await get_setting("gemini_api_key", DEFAULT_GEMINI_KEY)
+    ai_badge = "✅ Faol (Gemini AI)" if current_key else "❌ O'chiq"
     text = (
         "📊 <b>Bot Statistikasi:</b>\n\n"
         f"👥 <b>Jami foydalanuvchilar:</b> {stats['total_users']} ta\n"
         f"💬 <b>Jami qilingan tarjimalar:</b> {stats['total_translations']} ta\n"
         f"🔥 <b>Bugun faol bo'lganlar:</b> {stats['today_active']} ta\n"
-        f"✨ <b>Bugun yangi qo'shilganlar:</b> {stats['today_new']} ta\n\n"
+        f"✨ <b>Bugun yangi qo'shilganlar:</b> {stats['today_new']} ta\n"
+        f"🤖 <b>Sun'iy intellekt (AI):</b> {ai_badge}\n\n"
         "💡 <i>Foydalanuvchilar ro'yxati: /users\n"
         "E'lon yuborish: /broadcast &lt;matn&gt;</i>"
     )
@@ -94,10 +117,7 @@ async def cmd_stat(message: Message) -> None:
 
 @router.message(Command("users"))
 async def cmd_users(message: Message) -> None:
-    if not message.from_user:
-        return
-    is_adm = await is_admin(message.from_user.id)
-    if not is_adm:
+    if not await _ensure_user_and_check_admin(message):
         await message.reply("🔒 <i>Kechirasiz, bu buyruq faqat bot admini uchun.</i>")
         return
 
@@ -110,7 +130,7 @@ async def cmd_users(message: Message) -> None:
     for idx, u in enumerate(users, start=1):
         name = html.escape(f"{u['first_name']} {u['last_name']}".strip() or "Nomsiz")
         uname = f"@{u['username']}" if u['username'] else f"<code>ID: {u['user_id']}</code>"
-        admin_badge = " 👑 (Admin)" if u['is_admin'] else ""
+        admin_badge = " 👑 (Admin)" if u["is_admin"] else ""
         lines.append(
             f"{idx}. <b>{name}</b> ({uname}){admin_badge}\n"
             f"   └ <i>Tarjimalar: {u['translations_count']} ta | Oxirgi faollik: {u['last_active']}</i>"
@@ -121,10 +141,7 @@ async def cmd_users(message: Message) -> None:
 
 @router.message(Command("broadcast", "xabar"))
 async def cmd_broadcast(message: Message, bot: Bot) -> None:
-    if not message.from_user:
-        return
-    is_adm = await is_admin(message.from_user.id)
-    if not is_adm:
+    if not await _ensure_user_and_check_admin(message):
         await message.reply("🔒 <i>Kechirasiz, bu buyruq faqat bot admini uchun.</i>")
         return
 
@@ -164,28 +181,27 @@ async def cmd_broadcast(message: Message, bot: Bot) -> None:
 
 @router.message(Command("setkey"))
 async def cmd_setkey(message: Message) -> None:
-    if not message.from_user:
-        return
-    is_adm = await is_admin(message.from_user.id)
-    if not is_adm:
+    if not await _ensure_user_and_check_admin(message):
         await message.reply("🔒 <i>Kechirasiz, bu buyruq faqat bot admini uchun.</i>")
         return
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        current_key = await get_setting("gemini_api_key", "")
-        status = "✅ Ulangan (AI faol)" if current_key else "❌ Ulanmagan"
+        current_key = await get_setting("gemini_api_key", DEFAULT_GEMINI_KEY)
+        status = "✅ Ulangan (AI doimiy faol)" if current_key else "❌ Ulanmagan"
         await message.reply(
             f"🤖 <b>Gemini Sun'iy Intellekt (AI) holati:</b> {status}\n\n"
-            "Kalitni o'rnatish uchun:\n"
-            "<code>/setkey AIzaSy...</code> deb yuboring.\n\n"
-            "<i>(Kalitni aistudio.google.com saytidan 100% tekinga olish mumkin)</i>"
+            "Yangi kalit o'rnatish uchun:\n"
+            "<code>/setkey KALIT</code> deb yuboring."
         )
         return
 
     key = parts[1].strip()
     await set_setting("gemini_api_key", key)
-    await message.reply("🔥 <b>Gemini AI kaliti muvaffaqiyatli saqlandi!</b>\n\nEndi bot har qanday gapni 100% jonli va tabiiy so'zlashuv uslubida tarjima qiladi!")
+    await message.reply(
+        "🔥 <b>Gemini AI kaliti bulutli xotiraga muvaffaqiyatli saqlandi!</b>\n\n"
+        "Endi bot har qanday gapni 100% jonli va tabiiy uslubda tarjima qiladi!"
+    )
 
 
 @router.message(F.text)
@@ -194,10 +210,8 @@ async def handle_translation(message: Message) -> None:
     if not text:
         return
 
-    # Check if this is a group chat
     is_group = message.chat.type in ["group", "supergroup"]
     if is_group:
-        # If in group, only respond if tagged, replied to, or command used
         bot_tag = f"@{BOT_USERNAME}".lower()
         is_reply_to_bot = (
             message.reply_to_message
@@ -210,19 +224,16 @@ async def handle_translation(message: Message) -> None:
         if not (is_tagged or is_reply_to_bot or text.startswith("/tr")):
             return
 
-        # If tagged or replied, clean the mention
         text = re.sub(rf"@{BOT_USERNAME}\b", "", text, flags=re.IGNORECASE).strip()
         if text.startswith("/tr"):
             text = text[3:].strip()
 
-        # If user replied to another message with just @tarjima01_bot or /tr, translate the replied message!
         if not text and message.reply_to_message and message.reply_to_message.text:
             text = message.reply_to_message.text.strip()
 
     if not text or text.startswith("/"):
         return
 
-    # Record user in database
     if message.from_user:
         await upsert_user(
             user_id=message.from_user.id,
@@ -244,12 +255,14 @@ async def handle_translation(message: Message) -> None:
 
         response_text = (
             f"{src_flag} <b>{src_name} ➔ {dst_flag} {dst_name}:</b>\n\n"
-            f"<code>{translated}</code>"
+            f"<code>{html.escape(translated)}</code>"
         )
         await message.reply(response_text)
-    except Exception as e:
+    except Exception:
         logger.exception("Translation error")
-        await message.reply("❌ Matnni tarjima qilishda xatolik yuz berdi. Iltimos qaytadan urinib ko'ring.")
+        await message.reply(
+            "❌ Matnni tarjima qilishda xatolik yuz berdi. Iltimos qaytadan urinib ko'ring."
+        )
 
 
 @router.inline_query()
@@ -285,7 +298,7 @@ async def inline_translate(inline_query: InlineQuery) -> None:
             title=title,
             description=translated,
             input_message_content=InputTextMessageContent(
-                message_text=result_text
+                message_text=html.escape(result_text)
             ),
         )
         await inline_query.answer([article], cache_time=5)
@@ -298,10 +311,10 @@ async def handle_ping(request: web.Request) -> web.Response:
 
 
 async def start_web_server() -> None:
-    """Run a small dummy HTTP server so Render Web Service health-check passes."""
     port = int(os.getenv("PORT", 8080))
     app = web.Application()
     app.router.add_get("/", handle_ping)
+    app.router.add_get("/health", handle_ping)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
@@ -309,21 +322,36 @@ async def start_web_server() -> None:
     logger.info(f"Health-check server running on port {port}")
 
 
+async def _keep_alive_loop(render_url: str) -> None:
+    ping_url = f"{render_url}/health"
+    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    while True:
+        await asyncio.sleep(240)
+        try:
+            conn = aiohttp.TCPConnector(family=socket.AF_INET, ssl=ssl_ctx)
+            async with aiohttp.ClientSession(connector=conn) as s:
+                async with s.get(ping_url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                    logger.debug(f"Keep-alive ping status: {r.status}")
+        except Exception:
+            pass
+
+
 async def run_startup_diagnostics(bot: Bot) -> None:
     gemini_key = await get_setting("gemini_api_key", DEFAULT_GEMINI_KEY)
     try:
-        r1 = await smart_translate("you are idiot", gemini_api_key=gemini_key)
-        r2 = await smart_translate("what should we do", gemini_api_key=gemini_key)
-        r3 = await smart_translate("nima gap", gemini_api_key=gemini_key)
-        r4 = await smart_translate("Привет, как дела?", gemini_api_key=gemini_key)
+        r1 = await smart_translate(
+            "People who aren't girls piss me off", gemini_api_key=gemini_key
+        )
+        r2 = await smart_translate("Yangi ovqat qildim", gemini_api_key=gemini_key)
+        r3 = await smart_translate("Chichvor", gemini_api_key=gemini_key)
         diag = (
             f"🇺🇿🇬🇧 {DEPLOY_VERSION} | "
-            f"1:{r1['translated']} ({r1['src_lang']}) | "
+            f"1:{r1['translated']} | "
             f"2:{r2['translated']} | "
             f"3:{r3['translated']}"
         )[:118]
         await bot.set_my_short_description(short_description=diag)
-        logger.info(f"Startup diagnostics passed: {diag} | 4:{r4['translated']}")
+        logger.info(f"Startup diagnostics passed: {diag}")
     except Exception as e:
         err_msg = f"⚠️ {DEPLOY_VERSION} ERR: {type(e).__name__}: {str(e)}"[:118]
         try:
@@ -367,8 +395,7 @@ async def main() -> None:
         webhook_url = f"{render_url}{webhook_path}"
         try:
             desc_text = (
-                "🇺🇿🇬🇧 Istalgan tildan O'zbekchaga va O'zbekchadan Inglizchaga tezkor tarjimon bot!\n\n"
-                f"🌐 Server: {render_url}"
+                "🇺🇿🇬🇧 Istalgan tildan O'zbekchaga va O'zbekchadan Inglizchaga sun'iy intellektli tezkor tarjimon bot!"
             )
             await bot.set_my_description(description=desc_text)
         except Exception:
@@ -393,12 +420,17 @@ async def main() -> None:
         await runner.setup()
         site = web.TCPSite(runner, "0.0.0.0", port)
         await site.start()
-        logger.info(f"Tarjimon bot Webhook rejimida ishga tushdi: @{me.username} [{port}-port] [{DEPLOY_VERSION}]")
+        asyncio.create_task(_keep_alive_loop(render_url))
+        logger.info(
+            f"Tarjimon bot Webhook rejimida ishga tushdi: @{me.username} [{port}-port] [{DEPLOY_VERSION}]"
+        )
         await asyncio.Event().wait()
     else:
         await bot.delete_webhook(drop_pending_updates=False)
         await start_web_server()
-        logger.info(f"Tarjimon bot Polling rejimida ishga tushdi: @{me.username} ({me.full_name}) [{DEPLOY_VERSION}]")
+        logger.info(
+            f"Tarjimon bot Polling rejimida ishga tushdi: @{me.username} ({me.full_name}) [{DEPLOY_VERSION}]"
+        )
         await dp.start_polling(bot)
 
 
