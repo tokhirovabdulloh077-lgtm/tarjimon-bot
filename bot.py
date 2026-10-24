@@ -27,7 +27,7 @@ logger = logging.getLogger("tarjimon_bot")
 
 router = Router()
 BOT_USERNAME: str = ""
-DEPLOY_VERSION = "v5.0-multi"
+DEPLOY_VERSION = "v5.1-slang"
 
 
 @router.message(CommandStart())

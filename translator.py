@@ -75,15 +75,118 @@ UZBEK_QUICK_DICT = {
     "qalesan": "how are you",
     "qalaysan": "how are you",
     "qalaysiz": "how are you",
+    "qales": "how are you",
+    "qvosan": "what are you doing?",
+    "qmursan": "what are you doing?",
     "nima gap": "what's up",
     "tinchlikmi": "is everything okay",
     "rahmat": "thank you",
     "raxmat": "thank you",
+    "rahmt": "thank you",
+    "rxmt": "thank you",
     "xop": "okay",
     "xo'p": "okay",
     "mayli": "alright",
     "bo'ldi": "done / okay",
     "boldi": "done / okay",
+    "bopti": "okay / agreed",
+    "bopt": "okay / agreed",
+    "chundim": "I understand",
+    "tushundm": "I understand",
+    "bilmiman": "I don't know",
+    "blmiman": "I don't know",
+    "qatta": "where?",
+    "qattasiz": "where are you?",
+    "yoge": "really? / no way!",
+    "yo'g'e": "really? / no way!",
+}
+
+# Internet slang & abbreviations dictionary
+SLANG_EXACT_MAP: Dict[str, Tuple[str, str, str, str, str]] = {
+    "idk": ("bilmayman (I don't know)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "iykyk": ("tushungan tushunadi / bilsangiz bilasiz (If you know, you know)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "tbh": ("ochig'ini aytganda / rostini aytsam (To be honest)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "ngl": ("rostini aytsam / yashirmayman (Not gonna lie)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "imo": ("mening fikrimcha (In my opinion)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "imho": ("mening kamtarona fikrimcha (In my humble opinion)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "ofc": ("albatta (Of course)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "idc": ("menga baribir / qiziq emas (I don't care)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "idgaf": ("menga mutlaqo baribir / farqi yo'q (I don't care at all)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "nvm": ("hechqisi yo'q / e'tibor berma (Never mind)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "btw": ("aytgandek / darvoqe (By the way)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "omg": ("voy xudoyim! / yo rab (Oh my god!)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "lol": ("juda kulgili / xaxaxa (Laughing out loud)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "lmao": ("kulib qotdim (Laughing my ass off)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "asap": ("imkon qadar tezroq (As soon as possible)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "pls": ("iltimos (Please)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "plz": ("iltimos (Please)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "thx": ("rahmat (Thanks)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "ty": ("rahmat (Thank you)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "np": ("arzimaydi / muammo yo'q (No problem)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "brb": ("hozir qaytaman (Be right back)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "wyd": ("nima qilyapsan? (What are you doing?)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "hru": ("qalaysan? / qandaysiz? (How are you?)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "wbu": ("o'zingdachi? / sizdachi? (What about you?)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "hbu": ("o'zingchi? (How about you?)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "ikr": ("shuni ayting / haq gap (I know, right)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "gtg": ("ketishim kerak (Got to go)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "g2g": ("ketishim kerak (Got to go)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "cya": ("ko'rishguncha (See you)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "ily": ("seni yaxshi ko'raman (I love you)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "pov": ("nuqtai nazar / hayotiy holat (Point of view)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "fr": ("rostdan ham / jiddiy (For real)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "frfr": ("haqiqatdan ham (For real, for real)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "rn": ("aynan hozir (Right now)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "tldr": ("qisqasi / xulosa (Too long; didn't read)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "yw": ("arzimaydi (You're welcome)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "gg": ("yaxshi o'yin (Good game)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "fyi": ("ma'lumot uchun (For your information)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "smh": ("bosh chayqash / hafsala pir bo'lish (Shaking my head)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "wth": ("bu nima degani? / bu nima jinnilik? (What the heck?)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "wtf": ("bu nima degani? (What the f***?)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "wtd": ("nima qilish kerak? (What to do?)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+}
+
+SLANG_EXPAND = {
+    r"\bidk\b": "I don't know",
+    r"\biykyk\b": "if you know you know",
+    r"\btbh\b": "to be honest",
+    r"\bngl\b": "not going to lie",
+    r"\bimo\b": "in my opinion",
+    r"\bimho\b": "in my humble opinion",
+    r"\bofc\b": "of course",
+    r"\bidc\b": "I don't care",
+    r"\bidgaf\b": "I don't care at all",
+    r"\bnvm\b": "never mind",
+    r"\bbtw\b": "by the way",
+    r"\bomg\b": "oh my god",
+    r"\basap\b": "as soon as possible",
+    r"\bpls\b": "please",
+    r"\bplz\b": "please",
+    r"\bthx\b": "thanks",
+    r"\bty\b": "thank you",
+    r"\bnp\b": "no problem",
+    r"\bbrb\b": "be right back",
+    r"\bwyd\b": "what are you doing",
+    r"\bhru\b": "how are you",
+    r"\bwbu\b": "what about you",
+    r"\bhbu\b": "how about you",
+    r"\bikr\b": "I know right",
+    r"\bgtg\b": "got to go",
+    r"\bg2g\b": "got to go",
+    r"\bcya\b": "see you",
+    r"\bily\b": "I love you",
+    r"\bfr\b": "for real",
+    r"\bfrfr\b": "for real",
+    r"\brn\b": "right now",
+    r"\byw\b": "you're welcome",
+    r"\bfyi\b": "for your information",
+    r"\bwth\b": "what the heck",
+    r"\bwtf\b": "what the fuck",
+    r"\bwtd\b": "what to do",
+    r"\bu\b": "you",
+    r"\br\b": "are",
+    r"\bur\b": "your",
 }
 
 
@@ -269,6 +372,21 @@ async def smart_translate(text: str) -> Dict[str, str]:
     normalized_text = re.sub(r"([a-zA-Z])\1{2,}", r"\1\1", normalized_text)
 
     lower_clean = normalized_text.lower()
+
+    # Exact match for common Internet slang & acronyms (e.g. idk, iykyk, tbh, ngl)
+    if lower_clean in SLANG_EXACT_MAP:
+        tr, sl, sn, sf, dn = SLANG_EXACT_MAP[lower_clean]
+        return {
+            "original": clean_text,
+            "translated": tr,
+            "src_lang": sl,
+            "src_name": sn,
+            "flag": sf,
+            "dst_lang": "uz",
+            "dst_name": dn,
+            "dst_flag": "🇺🇿",
+        }
+
     # Quick exact dictionary for common short Uzbek conversational words
     if lower_clean in UZBEK_QUICK_DICT:
         return {
@@ -282,11 +400,16 @@ async def smart_translate(text: str) -> Dict[str, str]:
             "dst_flag": "🇬🇧",
         }
 
+    # Expand acronyms inside sentences (e.g. "idk what you mean tbh" -> "I don't know what you mean to be honest")
+    expanded_text = normalized_text
+    for pat, repl in SLANG_EXPAND.items():
+        expanded_text = re.sub(pat, repl, expanded_text, flags=re.IGNORECASE)
+
     connector = _create_connector()
     async with aiohttp.ClientSession(connector=connector) as session:
         # 1. If heuristics detect Uzbek, translate uz -> en directly
-        if is_likely_uzbek(normalized_text):
-            tr_text, _ = await _translate_multi_layer(session, normalized_text, "uz", "en")
+        if is_likely_uzbek(expanded_text):
+            tr_text, _ = await _translate_multi_layer(session, expanded_text, "uz", "en")
             return {
                 "original": clean_text,
                 "translated": tr_text,
@@ -299,12 +422,12 @@ async def smart_translate(text: str) -> Dict[str, str]:
             }
 
         # 2. Otherwise translate auto -> uz
-        tr_text, detected_src = await _translate_multi_layer(session, normalized_text, "auto", "uz")
+        tr_text, detected_src = await _translate_multi_layer(session, expanded_text, "auto", "uz")
 
         # 3. If Google detected the input as Uzbek ('uz'), OR if the Uzbek translation is identical
         # to the input, try translating from Uzbek to English ('uz' -> 'en')!
         if detected_src == "uz" or tr_text.lower().strip() == lower_clean:
-            en_tr, _ = await _translate_multi_layer(session, normalized_text, "uz", "en")
+            en_tr, _ = await _translate_multi_layer(session, expanded_text, "uz", "en")
             if detected_src == "uz" or en_tr.lower().strip() != lower_clean:
                 return {
                     "original": clean_text,
