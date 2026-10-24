@@ -501,9 +501,9 @@ async def _call_gemini_ai(
 ) -> Optional[Tuple[str, str, str]]:
     models_to_try = [
         ("gemini-2.5-flash", True),
-        ("gemini-3.1-flash-lite", False),
         ("gemini-3.5-flash", False),
         ("gemini-flash-lite-latest", False),
+        ("gemini-3.1-flash-lite", False),
         ("gemini-3.5-flash-lite", False),
     ]
 
@@ -524,7 +524,7 @@ async def _call_gemini_ai(
         }
         try:
             async with session.post(
-                url, json=payload, timeout=aiohttp.ClientTimeout(total=8)
+                url, json=payload, timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json(content_type=None)
