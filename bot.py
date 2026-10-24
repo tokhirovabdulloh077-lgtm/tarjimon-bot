@@ -20,9 +20,11 @@ from dotenv import load_dotenv
 from database import (
     get_all_user_ids,
     get_recent_users,
+    get_setting,
     get_stats,
     init_db,
     is_admin,
+    set_setting,
     upsert_user,
 )
 from translator import smart_translate
@@ -37,7 +39,7 @@ logger = logging.getLogger("tarjimon_bot")
 
 router = Router()
 BOT_USERNAME: str = ""
-DEPLOY_VERSION = "v5.2-db"
+DEPLOY_VERSION = "v5.3-ai"
 
 
 @router.message(CommandStart())
@@ -158,6 +160,32 @@ async def cmd_broadcast(message: Message, bot: Bot) -> None:
     )
 
 
+@router.message(Command("setkey"))
+async def cmd_setkey(message: Message) -> None:
+    if not message.from_user:
+        return
+    is_adm = await is_admin(message.from_user.id)
+    if not is_adm:
+        await message.reply("🔒 <i>Kechirasiz, bu buyruq faqat bot admini uchun.</i>")
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        current_key = await get_setting("gemini_api_key", "")
+        status = "✅ Ulangan (AI faol)" if current_key else "❌ Ulanmagan"
+        await message.reply(
+            f"🤖 <b>Gemini Sun'iy Intellekt (AI) holati:</b> {status}\n\n"
+            "Kalitni o'rnatish uchun:\n"
+            "<code>/setkey AIzaSy...</code> deb yuboring.\n\n"
+            "<i>(Kalitni aistudio.google.com saytidan 100% tekinga olish mumkin)</i>"
+        )
+        return
+
+    key = parts[1].strip()
+    await set_setting("gemini_api_key", key)
+    await message.reply("🔥 <b>Gemini AI kaliti muvaffaqiyatli saqlandi!</b>\n\nEndi bot har qanday gapni 100% jonli va tabiiy so'zlashuv uslubida tarjima qiladi!")
+
+
 @router.message(F.text)
 async def handle_translation(message: Message) -> None:
     text = message.text.strip()
@@ -202,8 +230,10 @@ async def handle_translation(message: Message) -> None:
             increment_count=True,
         )
 
+    gemini_key = await get_setting("gemini_api_key", os.getenv("GEMINI_API_KEY", ""))
+
     try:
-        res = await smart_translate(text)
+        res = await smart_translate(text, gemini_api_key=gemini_key)
         src_name = res["src_name"]
         src_flag = res["flag"]
         dst_name = res.get("dst_name", "O'zbekcha")
@@ -235,8 +265,10 @@ async def inline_translate(inline_query: InlineQuery) -> None:
             increment_count=True,
         )
 
+    gemini_key = await get_setting("gemini_api_key", os.getenv("GEMINI_API_KEY", ""))
+
     try:
-        res = await smart_translate(query)
+        res = await smart_translate(query, gemini_api_key=gemini_key)
         src_name = res["src_name"]
         src_flag = res["flag"]
         dst_name = res.get("dst_name", "O'zbekcha")

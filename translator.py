@@ -147,6 +147,71 @@ SLANG_EXACT_MAP: Dict[str, Tuple[str, str, str, str, str]] = {
     "wtd": ("nima qilish kerak? (What to do?)", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
 }
 
+# Conversational idioms & phrases (natural living speech instead of robotic translation)
+CONVERSATIONAL_IDIOMS: Dict[str, Tuple[str, str, str, str, str]] = {
+    "i feel you": ("seni tushunaman / dardimiz bir", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "chill out": ("o'zingni bos / damingni ol", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "chill": ("o'zingni bos / damingni ol", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "i'm broke": ("cho'ntak bo'sh / pulim qolmagan", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "i am broke": ("cho'ntak bo'sh / pulim qolmagan", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "my bad": ("ayb menda / kechirasan", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "piece of cake": ("juda oson / xamirdek oson ish", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "hit me up": ("menga yozvor / aloqaga chiq", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "no way": ("yo'g'e! / bo'lishi mumkin emas", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "are you kidding me": ("hazillashyapsanmi? / jiddiy aytayapsanmi?", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "never mind": ("hechqisi yo'q / e'tibor berma / qo'yaver", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "cut it out": ("bas qil / to'xtat", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "take it easy": ("o'zingni bos / xavotir olma", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "sleep tight": ("shirin tushlar / yaxshi dam ol", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "spill the tea": ("gapir, nima gap? / sirlarni och", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "you rock": ("qoyilsan / zo'rsan", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "shut up": ("jim bo'l / ovozingni o'chir", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "same here": ("menda ham xuddi shunday", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "what's good": ("nima gaplar? / tinchmi?", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "count me in": ("men ham borman / meni ham qo'sh", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "count me out": ("men yo'qman / mensiz qilaveringlar", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "no big deal": ("arzimaydi / katta gap emas", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "catch you later": ("keyinroq gaplashamiz / ko'rishguncha", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "under the weather": ("mazam yo'q / biroz betob", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "it is what it is": ("bo'lar ish bo'ldi / taqdir ekan", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "hands down": ("shubhasiz / bir ovozdan", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "keep in touch": ("aloqada bo'laylik", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "by all means": ("bajonidil / albatta", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "give me a break": ("qo'ysang-chi / jonimga tegding", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "call it a day": ("bugunga yetadi / tugatsak ham bo'ladi", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "hang in there": ("sabr qil / chida", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "so far so good": ("hozircha hammasi yaxshi", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "finger crossed": ("omad tilayman / umid qilamiz", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "cross my heart": ("qasamyod qilaman / rostdan", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "break a leg": ("omad yor bo'lsin!", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "go for it": ("dadil bo'l / harakat qil!", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "long time no see": ("ancha bo'ldi ko'rishmaganimizga / bormisiz", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "take care": ("o'zingni ehtiyot qil", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "don't worry": ("xavotir olma", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "no worries": ("xavotirga o'rin yo'q / arzimaydi", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "for real": ("rostdan ham / jiddiy", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "ghosted me": ("javob bermay aloqani uzdi", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "he ghosted me": ("u menga javob bermay yo'q bo'lib ketdi", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+    "she ghosted me": ("u qiz menga javob bermay yo'q bo'lib ketdi", "en", "Inglizcha", "🇬🇧", "O'zbekcha"),
+}
+
+ROBOTIC_FIXES = [
+    (r"\bmen buzildim\b", "cho'ntak bo'sh / pulim qolmagan"),
+    (r"\bmening yomonim\b", "ayb menda / kechirasan"),
+    (r"\bsizni sezyapman\b", "seni tushunaman / dardimiz bir"),
+    (r"\bmen sizni his qilyapman\b", "seni juda yaxshi tushunaman"),
+    (r"\bpirojnoe bo'lagi\b", "juda oson ish"),
+    (r"\bmeni uring\b", "menga yozvor / aloqaga chiq"),
+    (r"\bmeni ur\b", "menga yozvor / aloqaga chiq"),
+    (r"\boromlanish, tinchlanish\b", "o'zingni bos / damingni ol"),
+    (r"\bhech qanday yo'l\b", "bo'lishi mumkin emas / yo'g'e"),
+    (r"\bhech qachon aql\b", "hechqisi yo'q / qo'yaver"),
+    (r"\bmen yaxshiman\b", "yaxshi, rahmat / hammasi joyida"),
+    (r"\bo'likman\b", "kulib o'laman / yorildim"),
+    (r"\boson oling\b", "o'zingni bos / xavotir olma"),
+    (r"\bqattiq uxlang\b", "shirin tushlar / yaxshi dam ol"),
+]
+
 SLANG_EXPAND = {
     r"\bidk\b": "I don't know",
     r"\biykyk\b": "if you know you know",
@@ -362,7 +427,40 @@ def _create_connector() -> aiohttp.TCPConnector:
         return aiohttp.TCPConnector(family=socket.AF_INET, ssl=False)
 
 
-async def smart_translate(text: str) -> Dict[str, str]:
+async def _call_gemini_ai(session: aiohttp.ClientSession, text: str, api_key: str) -> Optional[Tuple[str, str, str]]:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    prompt = (
+        "Siz o'zbek va ingliz tillarida eng tajribali, tabiiy, zamonaviy so'zlashuvchi professional tarjimonsiz.\n"
+        "Qoidalar:\n"
+        "1. Agar matn o'zbek tilida bo'lsa, uni ingliz tiliga tabiiy jonli so'zlashuv uslubida tarjima qiling.\n"
+        "2. Agar matn chet tilida bo'lsa, uni o'zbek tiliga o'giring. Aslo quruq, kitobiy yoki so'zma-so'z tarjima qilmang! Odamlar ko'chada, do'stlar orasida qanday tabiiy gaplashsa, xuddi shunday tirik tilda tarjima qiling. Sleng va idiomalarni o'zbekcha jonli ma'nosiga moslang.\n"
+        "3. FAQAT tarjimani qaytaring, hech qanday qo'shimcha so'z, izoh yoki tushuntirish yozmang.\n\n"
+        f"Matn:\n{text}"
+    )
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.35, "maxOutputTokens": 800},
+    }
+    try:
+        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+            if resp.status == 200:
+                data = await resp.json(content_type=None)
+                candidates = data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts and "text" in parts[0]:
+                        tr = parts[0]["text"].strip()
+                        if tr:
+                            is_uz = is_likely_uzbek(text)
+                            src_l = "uz" if is_uz else "en"
+                            dst_l = "en" if is_uz else "uz"
+                            return tr, src_l, dst_l
+    except Exception as e:
+        logger.warning(f"Gemini AI error: {e}")
+    return None
+
+
+async def smart_translate(text: str, gemini_api_key: str = "") -> Dict[str, str]:
     clean_text = text.strip()
     if not clean_text:
         return {"original": "", "translated": "", "src_lang": "", "src_name": "", "flag": "", "dst_lang": "uz"}
@@ -371,9 +469,23 @@ async def smart_translate(text: str) -> Dict[str, str]:
     normalized_text = re.sub(r"([aeiouAEIOU])\1{2,}", r"\1", clean_text)
     normalized_text = re.sub(r"([a-zA-Z])\1{2,}", r"\1\1", normalized_text)
 
-    lower_clean = normalized_text.lower()
+    lower_clean = normalized_text.lower().strip("?!.,;:")
 
-    # Exact match for common Internet slang & acronyms (e.g. idk, iykyk, tbh, ngl)
+    # 1. Exact match for common conversational idioms & phrases
+    if lower_clean in CONVERSATIONAL_IDIOMS:
+        tr, sl, sn, sf, dn = CONVERSATIONAL_IDIOMS[lower_clean]
+        return {
+            "original": clean_text,
+            "translated": tr,
+            "src_lang": sl,
+            "src_name": sn,
+            "flag": sf,
+            "dst_lang": "uz",
+            "dst_name": dn,
+            "dst_flag": "🇺🇿",
+        }
+
+    # 2. Exact match for common Internet slang & acronyms (e.g. idk, iykyk, tbh, ngl)
     if lower_clean in SLANG_EXACT_MAP:
         tr, sl, sn, sf, dn = SLANG_EXACT_MAP[lower_clean]
         return {
@@ -387,7 +499,7 @@ async def smart_translate(text: str) -> Dict[str, str]:
             "dst_flag": "🇺🇿",
         }
 
-    # Quick exact dictionary for common short Uzbek conversational words
+    # 3. Quick exact dictionary for common short Uzbek conversational words
     if lower_clean in UZBEK_QUICK_DICT:
         return {
             "original": clean_text,
@@ -400,14 +512,32 @@ async def smart_translate(text: str) -> Dict[str, str]:
             "dst_flag": "🇬🇧",
         }
 
-    # Expand acronyms inside sentences (e.g. "idk what you mean tbh" -> "I don't know what you mean to be honest")
-    expanded_text = normalized_text
-    for pat, repl in SLANG_EXPAND.items():
-        expanded_text = re.sub(pat, repl, expanded_text, flags=re.IGNORECASE)
-
     connector = _create_connector()
     async with aiohttp.ClientSession(connector=connector) as session:
-        # 1. If heuristics detect Uzbek, translate uz -> en directly
+        # 4. If Gemini API key is available, use Gemini AI for superior natural conversational translation!
+        if gemini_api_key:
+            ai_res = await _call_gemini_ai(session, clean_text, gemini_api_key)
+            if ai_res:
+                ai_tr, ai_src, ai_dst = ai_res
+                src_n, src_f = LANG_NAMES.get(ai_src, ("Inglizcha", "🇬🇧"))
+                dst_n, dst_f = LANG_NAMES.get(ai_dst, ("O'zbekcha", "🇺🇿"))
+                return {
+                    "original": clean_text,
+                    "translated": ai_tr,
+                    "src_lang": ai_src,
+                    "src_name": src_n,
+                    "flag": src_f,
+                    "dst_lang": ai_dst,
+                    "dst_name": dst_n,
+                    "dst_flag": dst_f,
+                }
+
+        # Expand acronyms inside sentences (e.g. "idk what you mean tbh" -> "I don't know what you mean to be honest")
+        expanded_text = normalized_text
+        for pat, repl in SLANG_EXPAND.items():
+            expanded_text = re.sub(pat, repl, expanded_text, flags=re.IGNORECASE)
+
+        # 5. If heuristics detect Uzbek, translate uz -> en directly
         if is_likely_uzbek(expanded_text):
             tr_text, _ = await _translate_multi_layer(session, expanded_text, "uz", "en")
             return {
@@ -421,10 +551,10 @@ async def smart_translate(text: str) -> Dict[str, str]:
                 "dst_flag": "🇬🇧",
             }
 
-        # 2. Otherwise translate auto -> uz
+        # 6. Otherwise translate auto -> uz
         tr_text, detected_src = await _translate_multi_layer(session, expanded_text, "auto", "uz")
 
-        # 3. If Google detected the input as Uzbek ('uz'), OR if the Uzbek translation is identical
+        # 7. If Google detected the input as Uzbek ('uz'), OR if the Uzbek translation is identical
         # to the input, try translating from Uzbek to English ('uz' -> 'en')!
         if detected_src == "uz" or tr_text.lower().strip() == lower_clean:
             en_tr, _ = await _translate_multi_layer(session, expanded_text, "uz", "en")
@@ -439,6 +569,10 @@ async def smart_translate(text: str) -> Dict[str, str]:
                     "dst_name": "Inglizcha",
                     "dst_flag": "🇬🇧",
                 }
+
+        # Fix robotic machine translations into natural Uzbek
+        for pat, repl in ROBOTIC_FIXES:
+            tr_text = re.sub(pat, repl, tr_text, flags=re.IGNORECASE)
 
         src_name, src_flag = LANG_NAMES.get(detected_src, (detected_src.upper(), "🌐"))
         return {

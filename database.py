@@ -27,11 +27,39 @@ def _init_db_sync() -> None:
                 is_admin INTEGER DEFAULT 0
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
         conn.commit()
 
 
 async def init_db() -> None:
     await asyncio.to_thread(_init_db_sync)
+
+
+def _set_setting_sync(key: str, value: str) -> None:
+    with _get_connection() as conn:
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+        conn.commit()
+
+
+async def set_setting(key: str, value: str) -> None:
+    await asyncio.to_thread(_set_setting_sync, key, value)
+
+
+def _get_setting_sync(key: str, default: str = "") -> str:
+    with _get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        row = cur.fetchone()
+        return row["value"] if row else default
+
+
+async def get_setting(key: str, default: str = "") -> str:
+    return await asyncio.to_thread(_get_setting_sync, key, default)
 
 
 def _upsert_user_sync(user_id: int, first_name: str, last_name: str, username: str, increment_count: bool = False) -> None:
