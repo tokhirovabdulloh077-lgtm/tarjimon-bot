@@ -15,6 +15,7 @@ from aiogram.types import (
     InputTextMessageContent,
     Message,
 )
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from dotenv import load_dotenv
 
 from database import (
@@ -39,7 +40,7 @@ logger = logging.getLogger("tarjimon_bot")
 
 router = Router()
 BOT_USERNAME: str = ""
-DEPLOY_VERSION = "v5.5-gemini"
+DEPLOY_VERSION = "v5.6-webhook"
 DEFAULT_GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
 
 
@@ -340,7 +341,6 @@ async def main() -> None:
         return
 
     await init_db()
-    await start_web_server()
 
     bot = Bot(
         token=token,
@@ -358,8 +358,48 @@ async def main() -> None:
         ]
     )
     await run_startup_diagnostics(bot)
-    logger.info(f"Tarjimon bot ishga tushdi: @{me.username} ({me.full_name}) [{DEPLOY_VERSION}]")
-    await dp.start_polling(bot)
+
+    render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+    port = int(os.getenv("PORT", 8080))
+
+    if render_url:
+        webhook_path = "/webhook"
+        webhook_url = f"{render_url}{webhook_path}"
+        try:
+            desc_text = (
+                "🇺🇿🇬🇧 Istalgan tildan O'zbekchaga va O'zbekchadan Inglizchaga tezkor tarjimon bot!\n\n"
+                f"🌐 Server: {render_url}"
+            )
+            await bot.set_my_description(description=desc_text)
+        except Exception:
+            pass
+
+        await bot.set_webhook(
+            url=webhook_url,
+            allowed_updates=["message", "inline_query", "callback_query"],
+            drop_pending_updates=False,
+        )
+        logger.info(f"Telegram Webhook o'rnatildi: {webhook_url}")
+
+        app = web.Application()
+        app.router.add_get("/", handle_ping)
+        app.router.add_get("/health", handle_ping)
+
+        handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
+        handler.register(app, path=webhook_path)
+        setup_application(app, dp, bot=bot)
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        logger.info(f"Tarjimon bot Webhook rejimida ishga tushdi: @{me.username} [{port}-port] [{DEPLOY_VERSION}]")
+        await asyncio.Event().wait()
+    else:
+        await bot.delete_webhook(drop_pending_updates=False)
+        await start_web_server()
+        logger.info(f"Tarjimon bot Polling rejimida ishga tushdi: @{me.username} ({me.full_name}) [{DEPLOY_VERSION}]")
+        await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
