@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import os
 import re
@@ -16,6 +17,14 @@ from aiogram.types import (
 )
 from dotenv import load_dotenv
 
+from database import (
+    get_all_user_ids,
+    get_recent_users,
+    get_stats,
+    init_db,
+    is_admin,
+    upsert_user,
+)
 from translator import smart_translate
 
 load_dotenv()
@@ -28,11 +37,20 @@ logger = logging.getLogger("tarjimon_bot")
 
 router = Router()
 BOT_USERNAME: str = ""
-DEPLOY_VERSION = "v5.1-slang"
+DEPLOY_VERSION = "v5.2-db"
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
+    if message.from_user:
+        await upsert_user(
+            user_id=message.from_user.id,
+            first_name=message.from_user.first_name or "",
+            last_name=message.from_user.last_name or "",
+            username=message.from_user.username or "",
+            increment_count=False,
+        )
+
     text = (
         "👋 <b>Assalomu alaykum! O'zbekcha Tarjimon botiga xush kelibsiz!</b>\n\n"
         "Menga istalgan tilda (ingliz, rus, turk, nemis, arab, hind, xitoy va boshqa har qanday tilda) "
@@ -46,6 +64,98 @@ async def cmd_start(message: Message) -> None:
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
     await cmd_start(message)
+
+
+@router.message(Command("stat", "admin"))
+async def cmd_stat(message: Message) -> None:
+    if not message.from_user:
+        return
+    is_adm = await is_admin(message.from_user.id)
+    if not is_adm:
+        await message.reply("🔒 <i>Kechirasiz, bu buyruq faqat bot admini uchun.</i>")
+        return
+
+    stats = await get_stats()
+    text = (
+        "📊 <b>Bot Statistikasi:</b>\n\n"
+        f"👥 <b>Jami foydalanuvchilar:</b> {stats['total_users']} ta\n"
+        f"💬 <b>Jami qilingan tarjimalar:</b> {stats['total_translations']} ta\n"
+        f"🔥 <b>Bugun faol bo'lganlar:</b> {stats['today_active']} ta\n"
+        f"✨ <b>Bugun yangi qo'shilganlar:</b> {stats['today_new']} ta\n\n"
+        "💡 <i>Foydalanuvchilar ro'yxati: /users\n"
+        "E'lon yuborish: /broadcast &lt;matn&gt;</i>"
+    )
+    await message.reply(text)
+
+
+@router.message(Command("users"))
+async def cmd_users(message: Message) -> None:
+    if not message.from_user:
+        return
+    is_adm = await is_admin(message.from_user.id)
+    if not is_adm:
+        await message.reply("🔒 <i>Kechirasiz, bu buyruq faqat bot admini uchun.</i>")
+        return
+
+    users = await get_recent_users(limit=30)
+    if not users:
+        await message.reply("Hozircha birorta ham foydalanuvchi yo'q.")
+        return
+
+    lines = ["📋 <b>Oxirgi faol foydalanuvchilar:</b>\n"]
+    for idx, u in enumerate(users, start=1):
+        name = html.escape(f"{u['first_name']} {u['last_name']}".strip() or "Nomsiz")
+        uname = f"@{u['username']}" if u['username'] else f"<code>ID: {u['user_id']}</code>"
+        admin_badge = " 👑 (Admin)" if u['is_admin'] else ""
+        lines.append(
+            f"{idx}. <b>{name}</b> ({uname}){admin_badge}\n"
+            f"   └ <i>Tarjimalar: {u['translations_count']} ta | Oxirgi faollik: {u['last_active']}</i>"
+        )
+
+    await message.reply("\n".join(lines))
+
+
+@router.message(Command("broadcast", "xabar"))
+async def cmd_broadcast(message: Message, bot: Bot) -> None:
+    if not message.from_user:
+        return
+    is_adm = await is_admin(message.from_user.id)
+    if not is_adm:
+        await message.reply("🔒 <i>Kechirasiz, bu buyruq faqat bot admini uchun.</i>")
+        return
+
+    target_msg = message.reply_to_message
+    parts = message.text.split(maxsplit=1)
+    if not target_msg and len(parts) < 2:
+        await message.reply(
+            "📢 <b>Barcha obunachilarga xabar yuborish uchun:</b>\n\n"
+            "Yubormoqchi bo'lgan xabaringizga <code>reply</code> qilib /broadcast deb yozing yoki:\n"
+            "<code>/broadcast Salom hammaga!</code> deb yuboring."
+        )
+        return
+
+    text_to_send = parts[1] if len(parts) > 1 else ""
+    user_ids = await get_all_user_ids()
+    status_msg = await message.reply(f"⏳ Xabar {len(user_ids)} ta obunachiga yuborilmoqda...")
+
+    sent = 0
+    failed = 0
+    for uid in user_ids:
+        try:
+            if target_msg:
+                await target_msg.copy_to(chat_id=uid)
+            else:
+                await bot.send_message(chat_id=uid, text=text_to_send)
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed += 1
+
+    await status_msg.edit_text(
+        f"✅ <b>Xabar yuborish yakunlandi!</b>\n\n"
+        f"📬 Yetib bordi: <b>{sent} ta</b>\n"
+        f"❌ Yetib bormadi (botni to'xtatgan): <b>{failed} ta</b>"
+    )
 
 
 @router.message(F.text)
@@ -82,6 +192,16 @@ async def handle_translation(message: Message) -> None:
     if not text or text.startswith("/"):
         return
 
+    # Record user in database
+    if message.from_user:
+        await upsert_user(
+            user_id=message.from_user.id,
+            first_name=message.from_user.first_name or "",
+            last_name=message.from_user.last_name or "",
+            username=message.from_user.username or "",
+            increment_count=True,
+        )
+
     try:
         res = await smart_translate(text)
         src_name = res["src_name"]
@@ -105,6 +225,15 @@ async def inline_translate(inline_query: InlineQuery) -> None:
     query = inline_query.query.strip()
     if not query:
         return
+
+    if inline_query.from_user:
+        await upsert_user(
+            user_id=inline_query.from_user.id,
+            first_name=inline_query.from_user.first_name or "",
+            last_name=inline_query.from_user.last_name or "",
+            username=inline_query.from_user.username or "",
+            increment_count=True,
+        )
 
     try:
         res = await smart_translate(query)
@@ -176,6 +305,7 @@ async def main() -> None:
         logger.error("BOT_TOKEN topilmadi! .env fayliga BotFather tokenini kiriting.")
         return
 
+    await init_db()
     await start_web_server()
 
     bot = Bot(
