@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
@@ -53,7 +54,32 @@ async def handle_translation(message: Message) -> None:
     if not text:
         return
 
-    if text.startswith("/"):
+    # Check if this is a group chat
+    is_group = message.chat.type in ["group", "supergroup"]
+    if is_group:
+        # If in group, only respond if tagged, replied to, or command used
+        bot_tag = f"@{BOT_USERNAME}".lower()
+        is_reply_to_bot = (
+            message.reply_to_message
+            and message.reply_to_message.from_user
+            and message.reply_to_message.from_user.username
+            and message.reply_to_message.from_user.username.lower() == BOT_USERNAME.lower()
+        )
+        is_tagged = bot_tag in text.lower()
+
+        if not (is_tagged or is_reply_to_bot or text.startswith("/tr")):
+            return
+
+        # If tagged or replied, clean the mention
+        text = re.sub(rf"@{BOT_USERNAME}\b", "", text, flags=re.IGNORECASE).strip()
+        if text.startswith("/tr"):
+            text = text[3:].strip()
+
+        # If user replied to another message with just @tarjima01_bot or /tr, translate the replied message!
+        if not text and message.reply_to_message and message.reply_to_message.text:
+            text = message.reply_to_message.text.strip()
+
+    if not text or text.startswith("/"):
         return
 
     try:
