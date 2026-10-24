@@ -39,7 +39,8 @@ logger = logging.getLogger("tarjimon_bot")
 
 router = Router()
 BOT_USERNAME: str = ""
-DEPLOY_VERSION = "v5.4-gemini2.5"
+DEPLOY_VERSION = "v5.5-gemini"
+DEFAULT_GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
 
 
 @router.message(CommandStart())
@@ -230,7 +231,7 @@ async def handle_translation(message: Message) -> None:
             increment_count=True,
         )
 
-    gemini_key = await get_setting("gemini_api_key", os.getenv("GEMINI_API_KEY", ""))
+    gemini_key = await get_setting("gemini_api_key", DEFAULT_GEMINI_KEY)
 
     try:
         res = await smart_translate(text, gemini_api_key=gemini_key)
@@ -265,7 +266,7 @@ async def inline_translate(inline_query: InlineQuery) -> None:
             increment_count=True,
         )
 
-    gemini_key = await get_setting("gemini_api_key", os.getenv("GEMINI_API_KEY", ""))
+    gemini_key = await get_setting("gemini_api_key", DEFAULT_GEMINI_KEY)
 
     try:
         res = await smart_translate(query, gemini_api_key=gemini_key)
@@ -308,11 +309,12 @@ async def start_web_server() -> None:
 
 
 async def run_startup_diagnostics(bot: Bot) -> None:
+    gemini_key = await get_setting("gemini_api_key", DEFAULT_GEMINI_KEY)
     try:
-        r1 = await smart_translate("you are idiot")
-        r2 = await smart_translate("what should we do")
-        r3 = await smart_translate("nima gap")
-        r4 = await smart_translate("Привет, как дела?")
+        r1 = await smart_translate("you are idiot", gemini_api_key=gemini_key)
+        r2 = await smart_translate("what should we do", gemini_api_key=gemini_key)
+        r3 = await smart_translate("nima gap", gemini_api_key=gemini_key)
+        r4 = await smart_translate("Привет, как дела?", gemini_api_key=gemini_key)
         diag = (
             f"🇺🇿🇬🇧 {DEPLOY_VERSION} | "
             f"1:{r1['translated']} ({r1['src_lang']}) | "

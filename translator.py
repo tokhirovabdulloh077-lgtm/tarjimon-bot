@@ -416,7 +416,7 @@ async def _translate_multi_layer(session: aiohttp.ClientSession, text: str, sl: 
 
     if first_valid is not None:
         return first_valid
-    raise RuntimeError("All translation layers failed")
+    return text, sl
 
 
 def _create_connector() -> aiohttp.TCPConnector:
