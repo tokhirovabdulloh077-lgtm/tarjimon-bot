@@ -15,7 +15,7 @@ from aiogram.types import (
 )
 from dotenv import load_dotenv
 
-from translator import translate_text
+from translator import smart_translate
 
 load_dotenv()
 
@@ -33,10 +33,10 @@ BOT_USERNAME: str = ""
 async def cmd_start(message: Message) -> None:
     text = (
         "👋 <b>Assalomu alaykum! O'zbekcha Tarjimon botiga xush kelibsiz!</b>\n\n"
-        "Menga istalgan tilda (ingliz, rus, turk, arab, xitoy, koreys, nemis va h.k.) "
-        "matn yuboring — men uni <b>darhol O'zbek tiliga</b> tarjima qilib beraman! 🇺🇿\n\n"
-        "💡 <i>Agar o'zbekcha yozsangiz, ingliz tiliga o'girib beraman.</i>\n\n"
-        "✍️ <b>Istalgan so'z yoki matn yuborib sinab ko'ring!</b>"
+        "Menga istalgan tilda (ingliz, rus, turk, nemis, arab, hind, xitoy va boshqa har qanday tilda) "
+        "matn yuboring — men uni <b>O'zbek tiliga</b> tarjima qilib beraman! 🇺🇿\n\n"
+        "💡 <i>Agar o'zbek tilida yozsangiz, uni ingliz tiliga o'girib beraman! 🇬🇧</i>\n\n"
+        "✍️ <b>Istalgan so'z yoki gap yuborib sinab ko'ring!</b>"
     )
     await message.answer(text)
 
@@ -56,24 +56,17 @@ async def handle_translation(message: Message) -> None:
         return
 
     try:
-        res = await translate_text(text)
-        src_lang = res["src_lang"]
-        flag = res["flag"]
+        res = await smart_translate(text)
         src_name = res["src_name"]
+        src_flag = res["flag"]
+        dst_name = res.get("dst_name", "O'zbekcha")
+        dst_flag = res.get("dst_flag", "🇺🇿")
         translated = res["translated"]
-        extra_en = res.get("extra_en")
 
-        if src_lang == "uz" and extra_en:
-            response_text = (
-                f"🇺🇿 <b>O'zbekcha ➔ 🇬🇧 Inglizcha:</b>\n\n"
-                f"<code>{extra_en}</code>"
-            )
-        else:
-            response_text = (
-                f"{flag} <b>{src_name} ➔ 🇺🇿 O'zbekcha:</b>\n\n"
-                f"<code>{translated}</code>"
-            )
-
+        response_text = (
+            f"{src_flag} <b>{src_name} ➔ {dst_flag} {dst_name}:</b>\n\n"
+            f"<code>{translated}</code>"
+        )
         await message.reply(response_text)
     except Exception as e:
         logger.exception("Translation error")
@@ -87,26 +80,20 @@ async def inline_translate(inline_query: InlineQuery) -> None:
         return
 
     try:
-        res = await translate_text(query)
-        src_lang = res["src_lang"]
-        flag = res["flag"]
+        res = await smart_translate(query)
         src_name = res["src_name"]
+        src_flag = res["flag"]
+        dst_name = res.get("dst_name", "O'zbekcha")
+        dst_flag = res.get("dst_flag", "🇺🇿")
         translated = res["translated"]
-        extra_en = res.get("extra_en")
 
-        if src_lang == "uz" and extra_en:
-            title = "🇬🇧 Inglizchaga tarjima:"
-            result_text = f"🇬🇧 {extra_en}"
-            description = extra_en
-        else:
-            title = f"{flag} O'zbekchaga tarjima:"
-            result_text = f"🇺🇿 {translated}"
-            description = translated
+        title = f"{src_flag} ➔ {dst_flag} {dst_name}:"
+        result_text = f"{dst_flag} {translated}"
 
         article = InlineQueryResultArticle(
             id="1",
             title=title,
-            description=description,
+            description=translated,
             input_message_content=InputTextMessageContent(
                 message_text=result_text
             ),
@@ -117,7 +104,7 @@ async def inline_translate(inline_query: InlineQuery) -> None:
 
 
 async def handle_ping(request: web.Request) -> web.Response:
-    return web.Response(text="Tarjimon bot is running!")
+    return web.Response(text="Tarjimon bot is live and healthy!")
 
 
 async def start_web_server() -> None:
@@ -139,7 +126,6 @@ async def main() -> None:
         logger.error("BOT_TOKEN topilmadi! .env fayliga BotFather tokenini kiriting.")
         return
 
-    # Start health-check server for Render Web Service (Free Tier)
     await start_web_server()
 
     bot = Bot(
