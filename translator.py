@@ -460,6 +460,45 @@ async def _call_gemini_ai(session: aiohttp.ClientSession, text: str, api_key: st
     return None
 
 
+async def _call_groq_ai(session: aiohttp.ClientSession, text: str, api_key: str) -> Optional[Tuple[str, str, str]]:
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    is_uz = is_likely_uzbek(text)
+    system_prompt = (
+        "Siz o'zbek va ingliz tillarida eng tajribali, tabiiy, zamonaviy so'zlashuvchi professional tarjimonsiz. "
+        "Agar matn o'zbek tilida bo'lsa, ingliz tiliga tabiiy so'zlashuv uslubida tarjima qiling. "
+        "Agar matn chet tilida bo'lsa, o'zbek tiliga o'giring. Aslo quruq, kitobiy yoki so'zma-so'z tarjima qilmang! "
+        "Odamlar ko'chada va hayotda qanday gaplashsa, xuddi shunday jonli, ravon o'zbek tiliga o'giring. "
+        "FAQAT tarjimani qaytaring, hech qanday ortiqcha izoh yoki tushuntirish yozmang."
+    )
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": text},
+        ],
+        "temperature": 0.3,
+        "max_tokens": 800,
+    }
+    try:
+        async with session.post(url, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+            if resp.status == 200:
+                data = await resp.json(content_type=None)
+                choices = data.get("choices", [])
+                if choices:
+                    tr = choices[0].get("message", {}).get("content", "").strip()
+                    if tr:
+                        src_l = "uz" if is_uz else "en"
+                        dst_l = "en" if is_uz else "uz"
+                        return tr, src_l, dst_l
+    except Exception as e:
+        logger.warning(f"Groq AI error: {e}")
+    return None
+
+
 async def smart_translate(text: str, gemini_api_key: str = "") -> Dict[str, str]:
     clean_text = text.strip()
     if not clean_text:
@@ -514,9 +553,12 @@ async def smart_translate(text: str, gemini_api_key: str = "") -> Dict[str, str]
 
     connector = _create_connector()
     async with aiohttp.ClientSession(connector=connector) as session:
-        # 4. If Gemini API key is available, use Gemini AI for superior natural conversational translation!
+        # 4. If AI API key (Gemini AIza... or Groq gsk_...) is available, use AI for superior conversational translation!
         if gemini_api_key:
-            ai_res = await _call_gemini_ai(session, clean_text, gemini_api_key)
+            if gemini_api_key.startswith("gsk_"):
+                ai_res = await _call_groq_ai(session, clean_text, gemini_api_key)
+            else:
+                ai_res = await _call_gemini_ai(session, clean_text, gemini_api_key)
             if ai_res:
                 ai_tr, ai_src, ai_dst = ai_res
                 src_n, src_f = LANG_NAMES.get(ai_src, ("Inglizcha", "🇬🇧"))
