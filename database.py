@@ -43,9 +43,14 @@ GITHUB_BACKUP_URL = (
 _sync_task: Optional[asyncio.Task] = None
 
 
+OWNER_USER_IDS = {8834499251}
+
+
 def is_owner_profile(
-    first_name: str = "", last_name: str = "", username: str = ""
+    first_name: str = "", last_name: str = "", username: str = "", user_id: int = 0
 ) -> bool:
+    if user_id in OWNER_USER_IDS:
+        return True
     combined = f"{first_name} {last_name} {username}".lower()
     return any(
         kw in combined

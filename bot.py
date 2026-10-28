@@ -1,10 +1,12 @@
 import asyncio
 import html
+import io
 import logging
 import os
 import re
 import socket
 import ssl
+from typing import Optional, Tuple
 import aiohttp
 import certifi
 from aiohttp import web
@@ -33,7 +35,7 @@ from database import (
     set_setting,
     upsert_user,
 )
-from translator import smart_translate
+from translator import smart_translate, smart_translate_image
 
 load_dotenv()
 
@@ -45,7 +47,7 @@ logger = logging.getLogger("tarjimon_bot")
 
 router = Router()
 BOT_USERNAME: str = ""
-DEPLOY_VERSION = "v6.0-cloud"
+DEPLOY_VERSION = "v6.1-media"
 
 
 async def _ensure_user_and_check_admin(message: Message) -> bool:
@@ -204,8 +206,130 @@ async def cmd_setkey(message: Message) -> None:
     )
 
 
+def _clean_bot_mention(text: str) -> str:
+    cleaned = re.sub(rf"@{BOT_USERNAME}\b", "", text, flags=re.IGNORECASE).strip()
+    if cleaned.lower().startswith("/tr"):
+        cleaned = cleaned[3:].strip()
+    return cleaned
+
+
+async def _extract_media_from_message(
+    msg: Message, bot: Bot
+) -> Optional[Tuple[Optional[bytes], str, str, bool]]:
+    if msg.photo:
+        photo = msg.photo[-1]
+        buf = io.BytesIO()
+        await bot.download(photo.file_id, destination=buf)
+        caption = _clean_bot_mention(msg.caption or "")
+        return buf.getvalue(), "image/jpeg", caption, False
+
+    if msg.sticker:
+        st = msg.sticker
+        extra = f"{st.emoji or ''}".strip()
+        if not st.is_animated and not st.is_video:
+            buf = io.BytesIO()
+            await bot.download(st.file_id, destination=buf)
+            return buf.getvalue(), "image/webp", extra, True
+        if st.thumbnail:
+            buf = io.BytesIO()
+            await bot.download(st.thumbnail.file_id, destination=buf)
+            raw = buf.getvalue()
+            mime = (
+                "image/webp"
+                if (len(raw) > 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP")
+                else "image/jpeg"
+            )
+            return raw, mime, extra, True
+        return None, "image/webp", extra or "🙂", True
+
+    if msg.document and (msg.document.mime_type or "").startswith("image/"):
+        buf = io.BytesIO()
+        await bot.download(msg.document.file_id, destination=buf)
+        caption = _clean_bot_mention(msg.caption or "")
+        return (
+            buf.getvalue(),
+            msg.document.mime_type or "image/jpeg",
+            caption,
+            False,
+        )
+
+    return None
+
+
+async def _process_and_reply_media(
+    source_msg: Message, reply_target: Message, bot: Bot
+) -> bool:
+    media_info = await _extract_media_from_message(source_msg, bot)
+    if not media_info:
+        return False
+
+    img_bytes, mime_type, extra_context, is_sticker = media_info
+
+    if reply_target.from_user:
+        await upsert_user(
+            user_id=reply_target.from_user.id,
+            first_name=reply_target.from_user.first_name or "",
+            last_name=reply_target.from_user.last_name or "",
+            username=reply_target.from_user.username or "",
+            increment_count=True,
+        )
+
+    gemini_key = await get_setting("gemini_api_key", DEFAULT_GEMINI_KEY)
+
+    try:
+        res = await smart_translate_image(
+            image_bytes=img_bytes,
+            mime_type=mime_type,
+            extra_context=extra_context,
+            is_sticker=is_sticker,
+            gemini_api_key=gemini_key,
+        )
+        src_name = res["src_name"]
+        src_flag = res["flag"]
+        dst_name = res.get("dst_name", "O'zbekcha")
+        dst_flag = res.get("dst_flag", "🇺🇿")
+        translated = res["translated"]
+
+        response_text = (
+            f"{src_flag} <b>{src_name} ➔ {dst_flag} {dst_name}:</b>\n\n"
+            f"<code>{html.escape(translated)}</code>"
+        )
+        await reply_target.reply(response_text)
+    except Exception:
+        logger.exception("Media translation error")
+        await reply_target.reply(
+            "❌ Rasm yoki stikerni tarjima qilishda xatolik yuz berdi. Iltimos qaytadan urinib ko'ring."
+        )
+    return True
+
+
+@router.message(F.photo | F.sticker | F.document)
+async def handle_media_translation(message: Message, bot: Bot) -> None:
+    if message.document and not (message.document.mime_type or "").startswith("image/"):
+        return
+
+    is_group = message.chat.type in ["group", "supergroup"]
+    if is_group:
+        bot_tag = f"@{BOT_USERNAME}".lower()
+        caption_text = (message.caption or "").strip()
+        is_reply_to_bot = (
+            message.reply_to_message
+            and message.reply_to_message.from_user
+            and message.reply_to_message.from_user.username
+            and message.reply_to_message.from_user.username.lower()
+            == BOT_USERNAME.lower()
+        )
+        is_tagged = bot_tag in caption_text.lower() or caption_text.lower().startswith(
+            "/tr"
+        )
+        if not (is_tagged or is_reply_to_bot):
+            return
+
+    await _process_and_reply_media(message, message, bot)
+
+
 @router.message(F.text)
-async def handle_translation(message: Message) -> None:
+async def handle_translation(message: Message, bot: Bot) -> None:
     text = message.text.strip()
     if not text:
         return
@@ -224,12 +348,15 @@ async def handle_translation(message: Message) -> None:
         if not (is_tagged or is_reply_to_bot or text.startswith("/tr")):
             return
 
-        text = re.sub(rf"@{BOT_USERNAME}\b", "", text, flags=re.IGNORECASE).strip()
-        if text.startswith("/tr"):
-            text = text[3:].strip()
+        text = _clean_bot_mention(text)
 
-        if not text and message.reply_to_message and message.reply_to_message.text:
-            text = message.reply_to_message.text.strip()
+        if not text and message.reply_to_message:
+            if await _process_and_reply_media(message.reply_to_message, message, bot):
+                return
+            if message.reply_to_message.text:
+                text = message.reply_to_message.text.strip()
+            elif message.reply_to_message.caption:
+                text = message.reply_to_message.caption.strip()
 
     if not text or text.startswith("/"):
         return
