@@ -36,13 +36,17 @@ from database import (
     get_recent_users,
     get_setting,
     get_stats,
+    get_user_languages,
     init_db,
     is_admin,
     set_setting,
+    set_user_native_lang,
+    set_user_target_lang,
     upsert_user,
 )
 from translator import (
     LANG_NAMES,
+    TOP_LANG_CODES,
     generate_speech,
     smart_translate,
     smart_translate_media,
@@ -60,12 +64,21 @@ logger = logging.getLogger("tarjimon_bot")
 
 router = Router()
 BOT_USERNAME: str = ""
-DEPLOY_VERSION = "v6.3-pro-features"
+DEPLOY_VERSION = "v6.4-multilingual-pro"
 MAX_MEDIA_SIZE_MB = 20
 MAX_MEDIA_SIZE_BYTES = MAX_MEDIA_SIZE_MB * 1024 * 1024
 
 translation_cache: Dict[str, Dict] = {}
 pdf_cache: Dict[str, Dict] = {}
+
+ALL_SORTED_LANGUAGES = sorted(
+    [
+        (code, name, flag)
+        for code, (name, flag) in LANG_NAMES.items()
+        if code not in ("zh-CN", "iw")
+    ],
+    key=lambda x: x[1],
+)
 
 
 def clean_caches() -> None:
@@ -82,6 +95,105 @@ def clean_caches() -> None:
         ]
         for k in keys_to_del:
             pdf_cache.pop(k, None)
+
+
+def build_top_lang_markup(
+    current_code: str, mode: str = "target"
+) -> InlineKeyboardMarkup:
+    rows = []
+    current_row = []
+    for code in TOP_LANG_CODES:
+        name, flag = LANG_NAMES.get(code, (code.upper(), "🌐"))
+        check = " ✅" if code == current_code else ""
+        btn_text = f"{flag} {name}{check}"
+        current_row.append(
+            InlineKeyboardButton(
+                text=btn_text, callback_data=f"set_lang:{mode}:{code}"
+            )
+        )
+        if len(current_row) == 2:
+            rows.append(current_row)
+            current_row = []
+    if current_row:
+        rows.append(current_row)
+
+    nav_row = [
+        InlineKeyboardButton(
+            text="📋 Barcha tillar (A-Z)", callback_data=f"lang_page:{mode}:0"
+        ),
+    ]
+    if mode == "target":
+        nav_row.append(
+            InlineKeyboardButton(
+                text="🏠 Ona tilimni sozlash", callback_data="lang_menu:native"
+            )
+        )
+    else:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="🎯 Maqsadli tilga qaytish", callback_data="lang_menu:target"
+            )
+        )
+    rows.append(nav_row)
+    rows.append([InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_all_lang_markup(
+    current_code: str, page: int = 0, mode: str = "target"
+) -> InlineKeyboardMarkup:
+    per_page = 8
+    total_pages = (len(ALL_SORTED_LANGUAGES) + per_page - 1) // per_page
+    page = max(0, min(page, total_pages - 1))
+
+    start = page * per_page
+    page_items = ALL_SORTED_LANGUAGES[start : start + per_page]
+
+    rows = []
+    current_row = []
+    for code, name, flag in page_items:
+        check = " ✅" if code == current_code else ""
+        btn_text = f"{flag} {name}{check}"
+        current_row.append(
+            InlineKeyboardButton(
+                text=btn_text, callback_data=f"set_lang:{mode}:{code}"
+            )
+        )
+        if len(current_row) == 2:
+            rows.append(current_row)
+            current_row = []
+    if current_row:
+        rows.append(current_row)
+
+    nav_row = []
+    if page > 0:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="⬅️ Oldingi", callback_data=f"lang_page:{mode}:{page - 1}"
+            )
+        )
+    nav_row.append(
+        InlineKeyboardButton(
+            text=f"📄 {page + 1}/{total_pages}", callback_data="noop"
+        )
+    )
+    if page < total_pages - 1:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="Keyingi ➡️", callback_data=f"lang_page:{mode}:{page + 1}"
+            )
+        )
+    rows.append(nav_row)
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="🔙 Top tillarga qaytish", callback_data=f"lang_menu:{mode}"
+            ),
+            InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:home"),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def build_translation_markup(
@@ -110,8 +222,14 @@ def build_translation_markup(
         InlineKeyboardButton(text=l[1], callback_data=f"lang:{l[0]}:{job_id}")
         for l in other_langs[3:6]
     ]
+    row3 = [
+        InlineKeyboardButton(
+            text="🌐 Barcha tillar", callback_data="lang_menu:target"
+        ),
+        InlineKeyboardButton(text="⚙️ Sozlamalar", callback_data="menu:settings"),
+    ]
 
-    return InlineKeyboardMarkup(inline_keyboard=[[tts_btn], row1, row2])
+    return InlineKeyboardMarkup(inline_keyboard=[[tts_btn], row1, row2, row3])
 
 
 class MediaTooLargeError(Exception):
@@ -141,27 +259,132 @@ async def _ensure_user_and_check_admin(message: Message) -> bool:
 
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
-    if message.from_user:
+    user_id = message.from_user.id if message.from_user else 0
+    first_name = message.from_user.first_name or "" if message.from_user else ""
+    last_name = message.from_user.last_name or "" if message.from_user else ""
+    username = message.from_user.username or "" if message.from_user else ""
+
+    if user_id:
         await upsert_user(
-            user_id=message.from_user.id,
-            first_name=message.from_user.first_name or "",
-            last_name=message.from_user.last_name or "",
-            username=message.from_user.username or "",
+            user_id=user_id,
+            first_name=first_name,
+            last_name=last_name,
+            username=username,
             increment_count=False,
         )
 
-    text = (
-        "👋 <b>Assalomu alaykum! O'zbekcha Tarjimon botiga xush kelibsiz!</b>\n\n"
-        "Menga istalgan tildagi:\n"
-        "💬 <b>Matn</b> yoki 🎙 <b>Ovozli xabar (Voice)</b>\n"
-        "🖼 <b>Rasm / Skrinshot</b> yoki 🎭 <b>Stiker</b>\n"
-        "🎞 <b>GIF</b> yoki 🎬 <b>Video</b>\n"
-        "📚 <b>PDF Kitob yoki Hujjat</b>\n"
-        "yuboring — men uni <b>O'zbek tiliga</b> tabiiy tarjima qilib beraman! 🇺🇿\n\n"
-        "💡 <i>Har bir tarjima tagida <b>🔊 Talaffuz</b> tugmasi orqali jonli ovozda eshitish va <b>boshqa tillarga o'girish</b> mumkin!</i>\n\n"
-        "📹 <i>Maksimal fayl hajmi: 20 MB</i>"
+    target_lang, native_lang = (
+        await get_user_languages(user_id) if user_id else ("en", "uz")
     )
-    await message.answer(text)
+    target_name, target_flag = LANG_NAMES.get(target_lang, ("Inglizcha", "🇬🇧"))
+    native_name, native_flag = LANG_NAMES.get(native_lang, ("O'zbekcha", "🇺🇿"))
+
+    user_display = first_name or "Do'stim"
+    text = (
+        f"👋 <b>Assalomu alaykum, {html.escape(user_display)}!</b>\n"
+        f"<b>Universal Sun'iy Intellektli Tarjimon botiga xush kelibsiz!</b> 🌍🤖\n\n"
+        f"🎯 <b>Sizning hozirgi yo'nalishingiz:</b>\n"
+        f"• {native_flag} <b>{native_name} yozsangiz ➔</b> {target_flag} <b>{target_name}</b> tiliga o'giriladi\n"
+        f"• 🌍 <b>Boshqa tillarda yozsangiz ➔</b> {native_flag} <b>{native_name}</b> tiliga o'giriladi\n\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"📌 <b>Bot qanday imkoniyatlarga ega?</b>\n"
+        f"💬 <b>Matn:</b> Adabiy, qisqartma, so'zlashuv va ko'cha slenglarini tabiiy tarjima qiladi.\n"
+        f"🎙 <b>Ovozli xabar (Voice):</b> Ovozli xabardagi nutqni eshitib, matnga o'giradi va tarjima qiladi.\n"
+        f"🖼 <b>Rasm / Skrinshot:</b> Rasmdagi har qanday yozuvni o'qib, aniq tarjima qiladi.\n"
+        f"🎭 <b>Stiker:</b> Yozuvli va hissiyotli stikerlar ma'nosini tarjima qiladi.\n"
+        f"🎞 <b>GIF va Video:</b> Kadrdagi subtitrlar va dialoglarni tarjima qiladi (20 MB gacha).\n"
+        f"📚 <b>PDF Kitob va Hujjat:</b> <i>Martin Iden</i> va b. kitoblarni tahlil qiladi, 1-10 betlarini yoki matnli fayl qilib beradi.\n\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"✨ <b>Qo'shimcha qulayliklar:</b>\n"
+        f"🔊 <b>Jonli Talaffuz:</b> Har bir tarjima ostida <i>🔊 Talaffuz</i> tugmasi orqali sun'iy intellekt ovozida eshitish.\n"
+        f"🔄 <b>1-bosishda o'girish:</b> Tarjima qilingan matnni boshqa istalgan tilga tezkor o'tkazish.\n"
+        f"⚡️ <b>Inline rejim:</b> Istalgan chatda <code>@{BOT_USERNAME or 'tarjima01_bot'} so'z</code> deb yozib tarjima qilish.\n\n"
+        f"👇 <b>O'zingizga qulay tilni tanlang yoki to'g'ridan-to'g'ri xabar yuboring!</b>"
+    )
+
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🌐 Tarjima tilini sozlash",
+                    callback_data="lang_menu:target",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📚 Kitob / PDF qo'llanma",
+                    callback_data="menu:pdf_help",
+                ),
+                InlineKeyboardButton(
+                    text="⚙️ Sozlamalarim", callback_data="menu:settings"
+                ),
+            ],
+        ]
+    )
+    await message.answer(text, reply_markup=markup)
+
+
+@router.message(Command("lang"))
+async def cmd_lang(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else 0
+    target_lang, native_lang = (
+        await get_user_languages(user_id) if user_id else ("en", "uz")
+    )
+    target_name, target_flag = LANG_NAMES.get(target_lang, ("Inglizcha", "🇬🇧"))
+    native_name, native_flag = LANG_NAMES.get(native_lang, ("O'zbekcha", "🇺🇿"))
+
+    text = (
+        f"🌐 <b>Tarjima tili sozlamalari</b>\n\n"
+        f"📌 <b>Hozirgi sozlamangiz:</b>\n"
+        f"• {native_flag} <b>{native_name}</b> yozsangiz ➔ {target_flag} <b>{target_name}</b> tiliga o'giriladi!\n"
+        f"• 🌍 <b>Boshqa tillarda</b> yozsangiz ➔ {native_flag} <b>{native_name}</b> tiliga o'giriladi.\n\n"
+        f"👇 <b>{native_name} so'zlaringiz qaysi tilga tarjima qilinishini tanlang:</b>"
+    )
+    markup = build_top_lang_markup(target_lang, mode="target")
+    await message.answer(text, reply_markup=markup)
+
+
+@router.message(Command("settings"))
+async def cmd_settings(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else 0
+    if not user_id:
+        return
+    target_lang, native_lang = await get_user_languages(user_id)
+    target_name, target_flag = LANG_NAMES.get(target_lang, ("Inglizcha", "🇬🇧"))
+    native_name, native_flag = LANG_NAMES.get(native_lang, ("O'zbekcha", "🇺🇿"))
+
+    user_name = message.from_user.first_name or "Foydalanuvchi"
+
+    text = (
+        f"⚙️ <b>Sizning shaxsiy sozlamalaringiz:</b>\n\n"
+        f"👤 <b>Ism:</b> {html.escape(user_name)}\n"
+        f"🆔 <b>Telegram ID:</b> <code>{user_id}</code>\n"
+        f"🎯 <b>Maqsadli til:</b> {target_flag} {target_name}\n"
+        f"🏠 <b>Ona tilingiz:</b> {native_flag} {native_name}\n\n"
+        f"👇 <i>Tilni o'zgartirish uchun kerakli tugmani bosing:</i>"
+    )
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎯 Maqsadli tilni o'zgartirish",
+                    callback_data="lang_menu:target",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🏠 Ona tilimni o'zgartirish",
+                    callback_data="lang_menu:native",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 Bosh sahifa", callback_data="menu:home"
+                )
+            ],
+        ]
+    )
+    await message.answer(text, reply_markup=markup)
 
 
 @router.message(Command("help"))
@@ -544,12 +767,19 @@ async def _process_and_reply_media(
         except Exception:
             pass
 
+    user_id = reply_target.from_user.id if reply_target.from_user else 0
+    target_lang, native_lang = (
+        await get_user_languages(user_id) if user_id else ("en", "uz")
+    )
+
     try:
         res = await smart_translate_media(
             media_bytes=media_bytes,
             mime_type=mime_type,
             extra_context=extra_context,
             media_kind=media_kind,
+            target_lang=target_lang,
+            native_lang=native_lang,
             gemini_api_key=gemini_key,
         )
         src_name = res["src_name"]
@@ -699,10 +929,19 @@ async def handle_translation(message: Message, bot: Bot) -> None:
             increment_count=True,
         )
 
+    user_id = message.from_user.id if message.from_user else 0
+    target_lang, native_lang = (
+        await get_user_languages(user_id) if user_id else ("en", "uz")
+    )
     gemini_key = await get_setting("gemini_api_key", DEFAULT_GEMINI_KEY)
 
     try:
-        res = await smart_translate(text, gemini_api_key=gemini_key)
+        res = await smart_translate(
+            text,
+            target_lang=target_lang,
+            native_lang=native_lang,
+            gemini_api_key=gemini_key,
+        )
         src_name = res["src_name"]
         src_flag = res["flag"]
         dst_name = res.get("dst_name", "O'zbekcha")
@@ -874,6 +1113,276 @@ async def on_pdf_action(callback: CallbackQuery) -> None:
         await status_msg.edit_text(f"📖 <b>{desc}:</b>\n\n{result_text}")
 
 
+@router.callback_query(F.data == "noop")
+async def on_noop(callback: CallbackQuery) -> None:
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("lang_menu:"))
+async def on_lang_menu(callback: CallbackQuery) -> None:
+    parts = callback.data.split(":")
+    mode = parts[1] if len(parts) > 1 else "target"
+    user_id = callback.from_user.id if callback.from_user else 0
+    target_lang, native_lang = (
+        await get_user_languages(user_id) if user_id else ("en", "uz")
+    )
+    current_code = target_lang if mode == "target" else native_lang
+    target_name, target_flag = LANG_NAMES.get(target_lang, ("Inglizcha", "🇬🇧"))
+    native_name, native_flag = LANG_NAMES.get(native_lang, ("O'zbekcha", "🇺🇿"))
+
+    if mode == "target":
+        title = "🎯 <b>Maqsadli tilni tanlash</b>"
+        desc = (
+            f"• {native_flag} <b>{native_name} yozsangiz ➔</b> tanlangan tilga o'giriladi\n"
+            f"• 🌍 <b>Boshqa tillarda yozsangiz ➔</b> {native_flag} {native_name} tiliga o'giriladi\n\n"
+            f"👇 <i>{native_name} so'zlaringiz qaysi tilga tarjima qilinishini tanlang:</i>"
+        )
+    else:
+        title = "🏠 <b>Ona tilingizni tanlash</b>"
+        desc = (
+            "• Chet tillaridagi xabarlar qaysi tilga tarjima qilinishini belgilang.\n\n"
+            "👇 <i>Ona tilingizni tanlang:</i>"
+        )
+
+    text = f"{title}\n\n{desc}"
+    markup = build_top_lang_markup(current_code, mode=mode)
+    try:
+        await callback.message.edit_text(text, reply_markup=markup)
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("lang_page:"))
+async def on_lang_page(callback: CallbackQuery) -> None:
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        return
+    _, mode, page_str = parts
+    try:
+        page = int(page_str)
+    except ValueError:
+        page = 0
+
+    user_id = callback.from_user.id if callback.from_user else 0
+    target_lang, native_lang = (
+        await get_user_languages(user_id) if user_id else ("en", "uz")
+    )
+    current_code = target_lang if mode == "target" else native_lang
+
+    title = (
+        "🎯 <b>Barcha jahon tillari (A-Z)</b>"
+        if mode == "target"
+        else "🏠 <b>Barcha tillar (A-Z)</b>"
+    )
+    text = (
+        f"{title}\n\n"
+        "Ro'yxatdan o'zingizga kerakli tilni tanlang:\n"
+        "<i>(Sahifalar orasida o'tish uchun quyidagi tugmalardan foydalaning)</i>"
+    )
+    markup = build_all_lang_markup(current_code, page=page, mode=mode)
+    try:
+        await callback.message.edit_text(text, reply_markup=markup)
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("set_lang:"))
+async def on_set_lang(callback: CallbackQuery) -> None:
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        return
+    _, mode, code = parts
+    user_id = callback.from_user.id if callback.from_user else 0
+    if not user_id:
+        return
+
+    name, flag = LANG_NAMES.get(code, (code.upper(), "🌐"))
+    if mode == "target":
+        await set_user_target_lang(user_id, code)
+        await callback.answer(
+            f"✅ Maqsadli til: {flag} {name} tanlandi!", show_alert=False
+        )
+    else:
+        await set_user_native_lang(user_id, code)
+        await callback.answer(
+            f"✅ Ona tili: {flag} {name} tanlandi!", show_alert=False
+        )
+
+    target_lang, native_lang = await get_user_languages(user_id)
+    t_name, t_flag = LANG_NAMES.get(target_lang, ("Inglizcha", "🇬🇧"))
+    n_name, n_flag = LANG_NAMES.get(native_lang, ("O'zbekcha", "🇺🇿"))
+
+    title = "Maqsadli til" if mode == "target" else "Ona tili"
+    text = (
+        f"✅ <b>{title} muvaffaqiyatli saqlandi: {flag} {name}!</b>\n\n"
+        f"📌 <b>Yangi faol yo'nalishingiz:</b>\n"
+        f"• {n_flag} <b>{n_name} yozsangiz ➔</b> {t_flag} <b>{t_name}</b> tiliga o'giriladi\n"
+        f"• 🌍 <b>Boshqa tillarda yozsangiz ➔</b> {n_flag} <b>{n_name}</b> tiliga o'giriladi\n\n"
+        f"✍️ <i>Istalgan matn, ovoz, rasm yoki video yuborib sinab ko'rishingiz mumkin!</i>"
+    )
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🌐 Boshqa tilni tanlash",
+                    callback_data=f"lang_menu:{mode}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🏠 Bosh sahifa", callback_data="menu:home"
+                )
+            ],
+        ]
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=markup)
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "menu:home")
+async def on_menu_home(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id if callback.from_user else 0
+    first_name = (
+        callback.from_user.first_name or "Do'stim"
+        if callback.from_user
+        else "Do'stim"
+    )
+    target_lang, native_lang = (
+        await get_user_languages(user_id) if user_id else ("en", "uz")
+    )
+    target_name, target_flag = LANG_NAMES.get(target_lang, ("Inglizcha", "🇬🇧"))
+    native_name, native_flag = LANG_NAMES.get(native_lang, ("O'zbekcha", "🇺🇿"))
+
+    text = (
+        f"👋 <b>Assalomu alaykum, {html.escape(first_name)}!</b>\n"
+        f"<b>Universal Sun'iy Intellektli Tarjimon botiga xush kelibsiz!</b> 🌍🤖\n\n"
+        f"🎯 <b>Sizning hozirgi yo'nalishingiz:</b>\n"
+        f"• {native_flag} <b>{native_name} yozsangiz ➔</b> {target_flag} <b>{target_name}</b> tiliga o'giriladi\n"
+        f"• 🌍 <b>Boshqa tillarda yozsangiz ➔</b> {native_flag} <b>{native_name}</b> tiliga o'giriladi\n\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"📌 <b>Bot qanday imkoniyatlarga ega?</b>\n"
+        f"💬 <b>Matn:</b> Adabiy, qisqartma, so'zlashuv va ko'cha slenglarini tabiiy tarjima qiladi.\n"
+        f"🎙 <b>Ovozli xabar (Voice):</b> Ovozli xabardagi nutqni eshitib, matnga o'giradi va tarjima qiladi.\n"
+        f"🖼 <b>Rasm / Skrinshot:</b> Rasmdagi har qanday yozuvni o'qib, aniq tarjima qiladi.\n"
+        f"🎭 <b>Stiker:</b> Yozuvli va hissiyotli stikerlar ma'nosini tarjima qiladi.\n"
+        f"🎞 <b>GIF va Video:</b> Kadrdagi subtitrlar va dialoglarni tarjima qiladi (20 MB gacha).\n"
+        f"📚 <b>PDF Kitob va Hujjat:</b> <i>Martin Iden</i> va b. kitoblarni tahlil qiladi, 1-10 betlarini yoki matnli fayl qilib beradi.\n\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"✨ <b>Qo'shimcha qulayliklar:</b>\n"
+        f"🔊 <b>Jonli Talaffuz:</b> Har bir tarjima ostida <i>🔊 Talaffuz</i> tugmasi orqali sun'iy intellekt ovozida eshitish.\n"
+        f"🔄 <b>1-bosishda o'girish:</b> Tarjima qilingan matnni boshqa istalgan tilga tezkor o'tkazish.\n"
+        f"⚡️ <b>Inline rejim:</b> Istalgan chatda <code>@{BOT_USERNAME or 'tarjima01_bot'} so'z</code> deb yozib tarjima qilish.\n\n"
+        f"👇 <b>O'zingizga qulay tilni tanlang yoki to'g'ridan-to'g'ri xabar yuboring!</b>"
+    )
+
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🌐 Tarjima tilini sozlash",
+                    callback_data="lang_menu:target",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📚 Kitob / PDF qo'llanma",
+                    callback_data="menu:pdf_help",
+                ),
+                InlineKeyboardButton(
+                    text="⚙️ Sozlamalarim", callback_data="menu:settings"
+                ),
+            ],
+        ]
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=markup)
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu:settings")
+async def on_menu_settings(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id if callback.from_user else 0
+    user_name = (
+        callback.from_user.first_name or "Foydalanuvchi"
+        if callback.from_user
+        else "Foydalanuvchi"
+    )
+    target_lang, native_lang = (
+        await get_user_languages(user_id) if user_id else ("en", "uz")
+    )
+    target_name, target_flag = LANG_NAMES.get(target_lang, ("Inglizcha", "🇬🇧"))
+    native_name, native_flag = LANG_NAMES.get(native_lang, ("O'zbekcha", "🇺🇿"))
+
+    text = (
+        f"⚙️ <b>Sizning shaxsiy sozlamalaringiz:</b>\n\n"
+        f"👤 <b>Ism:</b> {html.escape(user_name)}\n"
+        f"🆔 <b>Telegram ID:</b> <code>{user_id}</code>\n"
+        f"🎯 <b>Maqsadli til:</b> {target_flag} {target_name}\n"
+        f"🏠 <b>Ona tilingiz:</b> {native_flag} {native_name}\n\n"
+        f"👇 <i>Tilni o'zgartirish uchun kerakli tugmani bosing:</i>"
+    )
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎯 Maqsadli tilni o'zgartirish",
+                    callback_data="lang_menu:target",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🏠 Ona tilimni o'zgartirish",
+                    callback_data="lang_menu:native",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 Bosh sahifa", callback_data="menu:home"
+                )
+            ],
+        ]
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=markup)
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu:pdf_help")
+async def on_menu_pdf_help(callback: CallbackQuery) -> None:
+    text = (
+        "📚 <b>Kitoblar va PDF hujjatlar bilan ishlash qo'llanmasi:</b>\n\n"
+        "Menga <b>Martin Iden</b> yoki istalgan kitob/hujjatning PDF faylini yuboring (20 MB gacha).\n"
+        "Faylni yuklaganingizda, bot sizga 4 xil variant taqdim etadi:\n\n"
+        "1. 📖 <b>1-10 betlar tarjimasi</b> — Kitobning dastlabki sahifalarini o'qib, o'zbek tiliga o'girib beradi.\n"
+        "2. 📝 <b>Kitob tahlili & Mazmuni</b> — Kitobning to'liq syujeti, qahramonlar fe'l-atvori va bosh g'oyasini batafsil tahlil qiladi.\n"
+        "3. 📄 <b>1-bob / Boshlang'ich qism</b> — Asarning kirish yoki birinchi bobini adabiy tarjima qiladi.\n"
+        "4. 📑 <b>To'liq fayl (.txt)</b> — Telegram cheklovlarisiz to'liq matnli fayl ko'rinishida taqdim etadi.\n\n"
+        "👇 <i>Sinab ko'rish uchun PDF faylni botga yuboring!</i>"
+    )
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔙 Bosh sahifa", callback_data="menu:home"
+                )
+            ]
+        ]
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=markup)
+    except Exception:
+        pass
+    await callback.answer()
+
+
 @router.inline_query()
 async def inline_translate(inline_query: InlineQuery) -> None:
     query = inline_query.query.strip()
@@ -889,10 +1398,19 @@ async def inline_translate(inline_query: InlineQuery) -> None:
             increment_count=True,
         )
 
+    user_id = inline_query.from_user.id if inline_query.from_user else 0
+    target_lang, native_lang = (
+        await get_user_languages(user_id) if user_id else ("en", "uz")
+    )
     gemini_key = await get_setting("gemini_api_key", DEFAULT_GEMINI_KEY)
 
     try:
-        res = await smart_translate(query, gemini_api_key=gemini_key)
+        res = await smart_translate(
+            query,
+            target_lang=target_lang,
+            native_lang=native_lang,
+            gemini_api_key=gemini_key,
+        )
         src_name = res["src_name"]
         src_flag = res["flag"]
         dst_name = res.get("dst_name", "O'zbekcha")
@@ -945,6 +1463,59 @@ async def _keep_alive_loop(render_url: str) -> None:
             pass
 
 
+async def _configure_bot_profile(bot: Bot) -> None:
+    try:
+        await bot.set_my_commands(
+            [
+                BotCommand(
+                    command="start",
+                    description="Botni ishga tushirish va to'liq qo'llanma",
+                ),
+                BotCommand(
+                    command="lang",
+                    description="Tarjima tilini tanlash (Rus, Ingliz, Turk va b.)",
+                ),
+                BotCommand(
+                    command="settings",
+                    description="Mening sozlamalarim va faol tilim",
+                ),
+                BotCommand(
+                    command="help",
+                    description="Yordam va foydalanish yo'riqnomasi",
+                ),
+            ]
+        )
+    except Exception as e:
+        logger.warning(f"set_my_commands error: {e}")
+
+    try:
+        short_desc = (
+            "AI Tarjimon: Matn, Ovoz, Rasm, GIF, Video va PDF Kitoblar tarjimasi. "
+            "🔊 Jonli talaffuz va 100+ tillar!"
+        )[:120]
+        await bot.set_my_short_description(short_description=short_desc)
+    except Exception as e:
+        logger.warning(f"set_my_short_description error: {e}")
+
+    try:
+        desc_text = (
+            "👋 Universal AI Tarjimon botiga xush kelibsiz!\n\n"
+            "Menga istalgan tildagi:\n"
+            "💬 Matn va 🎙 Ovozli xabar (Voice)\n"
+            "🖼 Rasm, Skrinshot va 🎭 Stikerlar\n"
+            "🎞 GIF va 🎬 Video (subtitr va nutq)\n"
+            "📚 PDF Kitoblar va Hujjatlar (Martin Iden va b.)\n\n"
+            "✨ Imkoniyatlar:\n"
+            "• 🔊 Jonli neyron talaffuz (ovozli eshitish)\n"
+            "• 🌐 Istalgan tilni tanlash (Ingliz, Rus, Turk, Arab va 100+ til)\n"
+            "• ⚡️ So'zlashuv, sleng va adabiy uslublarni tushunish\n\n"
+            "Boshlash uchun pastdagi Start tugmasini bosing! 👇"
+        )
+        await bot.set_my_description(description=desc_text)
+    except Exception as e:
+        logger.warning(f"set_my_description error: {e}")
+
+
 async def run_startup_diagnostics(bot: Bot) -> None:
     gemini_key = await get_setting("gemini_api_key", DEFAULT_GEMINI_KEY)
     try:
@@ -958,16 +1529,10 @@ async def run_startup_diagnostics(bot: Bot) -> None:
             f"1:{r1['translated']} | "
             f"2:{r2['translated']} | "
             f"3:{r3['translated']}"
-        )[:118]
-        await bot.set_my_short_description(short_description=diag)
+        )
         logger.info(f"Startup diagnostics passed: {diag}")
     except Exception as e:
-        err_msg = f"⚠️ {DEPLOY_VERSION} ERR: {type(e).__name__}: {str(e)}"[:118]
-        try:
-            await bot.set_my_short_description(short_description=err_msg)
-        except Exception:
-            pass
-        logger.exception("Startup diagnostics failed")
+        logger.exception(f"Startup diagnostics failed: {e}")
 
 
 async def main() -> None:
@@ -988,12 +1553,8 @@ async def main() -> None:
 
     me = await bot.get_me()
     BOT_USERNAME = me.username or ""
-    await bot.set_my_commands(
-        [
-            BotCommand(command="start", description="Botni ishga tushirish"),
-            BotCommand(command="help", description="Yordam va qo'llanma"),
-        ]
-    )
+
+    await _configure_bot_profile(bot)
     await run_startup_diagnostics(bot)
 
     render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
@@ -1002,13 +1563,6 @@ async def main() -> None:
     if render_url:
         webhook_path = "/webhook"
         webhook_url = f"{render_url}{webhook_path}"
-        try:
-            desc_text = (
-                "🇺🇿🇬🇧 Istalgan tildan O'zbekchaga va O'zbekchadan Inglizchaga sun'iy intellektli tezkor tarjimon bot!"
-            )
-            await bot.set_my_description(description=desc_text)
-        except Exception:
-            pass
 
         await bot.set_webhook(
             url=webhook_url,

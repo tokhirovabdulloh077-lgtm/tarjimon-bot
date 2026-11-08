@@ -6,7 +6,7 @@ import os
 import socket
 import sqlite3
 import ssl
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import aiohttp
 import certifi
@@ -75,7 +75,9 @@ def _init_db_sync() -> None:
                 translations_count INTEGER DEFAULT 0,
                 created_at TEXT,
                 last_active TEXT,
-                is_admin INTEGER DEFAULT 0
+                is_admin INTEGER DEFAULT 0,
+                target_lang TEXT DEFAULT 'en',
+                native_lang TEXT DEFAULT 'uz'
             )
         """)
         conn.execute("""
@@ -85,6 +87,13 @@ def _init_db_sync() -> None:
             )
         """)
         cur = conn.cursor()
+        cur.execute("PRAGMA table_info(users)")
+        cols = [r["name"] for r in cur.fetchall()]
+        if "target_lang" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN target_lang TEXT DEFAULT 'en'")
+        if "native_lang" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN native_lang TEXT DEFAULT 'uz'")
+
         cur.execute("SELECT value FROM settings WHERE key = 'gemini_api_key'")
         row = cur.fetchone()
         if not row or not row["value"]:
@@ -100,7 +109,9 @@ def _export_state_sync() -> Dict:
         cur = conn.cursor()
         cur.execute("""
             SELECT user_id, first_name, last_name, username,
-                   translations_count, created_at, last_active, is_admin
+                   translations_count, created_at, last_active, is_admin,
+                   COALESCE(target_lang, 'en') AS target_lang,
+                   COALESCE(native_lang, 'uz') AS native_lang
             FROM users
         """)
         users = [dict(r) for r in cur.fetchall()]
@@ -128,9 +139,11 @@ def _import_state_sync(data: Dict) -> None:
                 cat = str(u.get("created_at") or "")
                 lat = str(u.get("last_active") or "")
                 adm = 1 if (u.get("is_admin") or is_owner_profile(fn, ln, un)) else 0
+                tgt_l = str(u.get("target_lang") or "en")
+                nat_l = str(u.get("native_lang") or "uz")
 
                 cur.execute(
-                    "SELECT translations_count, created_at, last_active, is_admin FROM users WHERE user_id = ?",
+                    "SELECT translations_count, created_at, last_active, is_admin, target_lang, native_lang FROM users WHERE user_id = ?",
                     (uid,),
                 )
                 existing = cur.fetchone()
@@ -141,6 +154,8 @@ def _import_state_sync(data: Dict) -> None:
                         merged_cat = cat
                     merged_lat = max(existing["last_active"] or "", lat)
                     merged_adm = max(int(existing["is_admin"] or 0), adm)
+                    merged_tgt = existing["target_lang"] or tgt_l
+                    merged_nat = existing["native_lang"] or nat_l
                     cur.execute(
                         """
                         UPDATE users
@@ -150,18 +165,20 @@ def _import_state_sync(data: Dict) -> None:
                             translations_count = ?,
                             created_at = ?,
                             last_active = ?,
-                            is_admin = ?
+                            is_admin = ?,
+                            target_lang = ?,
+                            native_lang = ?
                         WHERE user_id = ?
                         """,
-                        (fn, ln, un, merged_cnt, merged_cat, merged_lat, merged_adm, uid),
+                        (fn, ln, un, merged_cnt, merged_cat, merged_lat, merged_adm, merged_tgt, merged_nat, uid),
                     )
                 else:
                     cur.execute(
                         """
-                        INSERT INTO users (user_id, first_name, last_name, username, translations_count, created_at, last_active, is_admin)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO users (user_id, first_name, last_name, username, translations_count, created_at, last_active, is_admin, target_lang, native_lang)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (uid, fn, ln, un, cnt, cat, lat, adm),
+                        (uid, fn, ln, un, cnt, cat, lat, adm, tgt_l, nat_l),
                     )
         if isinstance(settings, dict):
             for k, v in settings.items():
@@ -330,8 +347,8 @@ def _upsert_user_sync(
             initial_count = 1 if increment_count else 0
             cur.execute(
                 """
-                INSERT INTO users (user_id, first_name, last_name, username, translations_count, created_at, last_active, is_admin)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO users (user_id, first_name, last_name, username, translations_count, created_at, last_active, is_admin, target_lang, native_lang)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'en', 'uz')
             """,
                 (
                     user_id,
@@ -345,6 +362,55 @@ def _upsert_user_sync(
                 ),
             )
         conn.commit()
+
+
+def _get_user_languages_sync(user_id: int) -> Tuple[str, str]:
+    with _get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT target_lang, native_lang FROM users WHERE user_id = ?",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if row:
+            tgt = str(row["target_lang"] or "en").strip()
+            nat = str(row["native_lang"] or "uz").strip()
+            return tgt, nat
+        return "en", "uz"
+
+
+async def get_user_languages(user_id: int) -> Tuple[str, str]:
+    return await asyncio.to_thread(_get_user_languages_sync, user_id)
+
+
+def _set_user_target_lang_sync(user_id: int, target_lang: str) -> None:
+    with _get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE users SET target_lang = ? WHERE user_id = ?",
+            (target_lang, user_id),
+        )
+        conn.commit()
+
+
+async def set_user_target_lang(user_id: int, target_lang: str) -> None:
+    await asyncio.to_thread(_set_user_target_lang_sync, user_id, target_lang)
+    schedule_cloud_sync()
+
+
+def _set_user_native_lang_sync(user_id: int, native_lang: str) -> None:
+    with _get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE users SET native_lang = ? WHERE user_id = ?",
+            (native_lang, user_id),
+        )
+        conn.commit()
+
+
+async def set_user_native_lang(user_id: int, native_lang: str) -> None:
+    await asyncio.to_thread(_set_user_native_lang_sync, user_id, native_lang)
+    schedule_cloud_sync()
 
 
 async def upsert_user(

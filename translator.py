@@ -8,7 +8,7 @@ import re
 import socket
 import ssl
 import urllib.parse
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import aiohttp
 import certifi
@@ -26,42 +26,76 @@ FALLBACK_GEMINI_KEY = os.getenv("GEMINI_API_KEY", "").strip() or bytes(
 ).decode("utf-8")
 
 LANG_NAMES: Dict[str, Tuple[str, str]] = {
+    # Top ommabop tillar
     "en": ("Inglizcha", "🇬🇧"),
     "ru": ("Ruscha", "🇷🇺"),
+    "uz": ("O'zbekcha", "🇺🇿"),
     "tr": ("Turkcha", "🇹🇷"),
     "ar": ("Arabcha", "🇸🇦"),
     "de": ("Nemischa", "🇩🇪"),
-    "fr": ("Fransuzcha", "🇫🇷"),
-    "es": ("Ispancha", "🇪🇸"),
-    "zh-CN": ("Xitoycha", "🇨🇳"),
-    "zh": ("Xitoycha", "🇨🇳"),
     "ko": ("Koreyscha", "🇰🇷"),
+    "fr": ("Fransuzcha", "🇫🇷"),
+    "zh": ("Xitoycha", "🇨🇳"),
+    "zh-CN": ("Xitoycha", "🇨🇳"),
+    "es": ("Ispancha", "🇪🇸"),
     "ja": ("Yaponcha", "🇯🇵"),
-    "fa": ("Forscha", "🇮🇷"),
-    "hi": ("Hindcha", "🇮🇳"),
     "it": ("Italyancha", "🇮🇹"),
-    "pt": ("Portugalcha", "🇵🇹"),
+    # Markaziy Osiyo va mintaqaviy tillar
     "kk": ("Qozoqcha", "🇰🇿"),
     "ky": ("Qirg'izcha", "🇰🇬"),
     "tg": ("Tojikcha", "🇹🇯"),
     "az": ("Ozarbayjoncha", "🇦🇿"),
-    "uz": ("O'zbekcha", "🇺🇿"),
-    "fi": ("Fincha", "🇫🇮"),
+    "tk": ("Turkmancha", "🇹🇲"),
+    "tt": ("Tatarcha", "🇷🇺"),
+    # Osiyo va Yaqin Sharq
+    "fa": ("Forscha", "🇮🇷"),
+    "hi": ("Hindcha", "🇮🇳"),
+    "ur": ("Urducha", "🇵🇰"),
     "id": ("Indonezcha", "🇮🇩"),
     "ms": ("Malaycha", "🇲🇾"),
-    "nl": ("Gollandcha", "🇳🇱"),
-    "pl": ("Polyakcha", "🇵🇱"),
-    "uk": ("Ukraincha", "🇺🇦"),
-    "cs": ("Chexcha", "🇨🇿"),
-    "sv": ("Shvedcha", "🇸🇪"),
-    "el": ("Grekcha", "🇬🇷"),
-    "he": ("Ivritcha", "🇮🇱"),
-    "iw": ("Ivritcha", "🇮🇱"),
     "th": ("Taycha", "🇹🇭"),
     "vi": ("Vyetnamcha", "🇻🇳"),
     "bn": ("Bengalcha", "🇧🇩"),
-    "ur": ("Urducha", "🇵🇰"),
+    "he": ("Ivritcha", "🇮🇱"),
+    "iw": ("Ivritcha", "🇮🇱"),
+    "ps": ("Pushtu", "🇦🇫"),
+    "ka": ("Gruzincha", "🇬🇪"),
+    "hy": ("Armancha", "🇦🇲"),
+    "mn": ("Mo'g'ulcha", "🇲🇳"),
+    # Yevropa tillari
+    "uk": ("Ukraincha", "🇺🇦"),
+    "pl": ("Polyakcha", "🇵🇱"),
+    "pt": ("Portugalcha", "🇵🇹"),
+    "nl": ("Gollandcha", "🇳🇱"),
+    "sv": ("Shvedcha", "🇸🇪"),
+    "no": ("Norvegcha", "🇳🇴"),
+    "da": ("Dancha", "🇩🇰"),
+    "fi": ("Fincha", "🇫🇮"),
+    "cs": ("Chexcha", "🇨🇿"),
+    "sk": ("Slovakcha", "🇸🇰"),
+    "hu": ("Vengercha", "🇭🇺"),
+    "ro": ("Rumincha", "🇷🇴"),
+    "bg": ("Bolgarcha", "🇧🇬"),
+    "el": ("Grekcha", "🇬🇷"),
+    "sr": ("Serbcha", "🇷🇸"),
+    "hr": ("Xorvatcha", "🇭🇷"),
+    "sq": ("Albancha", "🇦🇱"),
+    "bs": ("Bosniycha", "🇧🇦"),
+    "sl": ("Slovencha", "🇸🇮"),
+    "lt": ("Litovcha", "🇱🇹"),
+    "lv": ("Latishcha", "🇱🇻"),
+    "et": ("Estoncha", "🇪🇪"),
+    # Boshqa tillar
+    "af": ("Afrikancha", "🇿🇦"),
+    "sw": ("Suahili", "🇰🇪"),
+    "la": ("Lotincha", "🏛"),
 }
+
+TOP_LANG_CODES: List[str] = [
+    "en", "ru", "tr", "ar", "de", "ko",
+    "fr", "zh", "es", "ja", "it", "kk",
+    "tg", "az", "fa", "hi"
+]
 
 UZBEK_WORDS = {
     "ha", "haa", "haaa", "xaa", "yoq", "yo'q", "salom", "assalomu", "alaykum",
@@ -480,27 +514,28 @@ def _create_connector() -> aiohttp.TCPConnector:
         return aiohttp.TCPConnector(family=socket.AF_INET, ssl=False)
 
 
-GEMINI_SYSTEM_PROMPT = (
-    "You are an elite, native-level Uzbek and multilingual translator.\n"
-    "RULES:\n"
-    "1. Detect the source language (`src_lang`: ISO 2-letter code like `en`, `ru`, `tr`, `ar`, `de`, `fr`, `es`, `zh`, `ko`, `ja`, `fa`, `hi`, `kk`, `ky`, `tg`, `az`, `uz`, etc.).\n"
-    "2. If the input text is in UZBEK (`src_lang`: \"uz\") — including conversational Uzbek, street slang, dialects, shortened words, or Cyrillic Uzbek — translate it into natural, idiomatic English (`dst_lang`: \"en\").\n"
-    "   - Example: \"Yangi ovqat qildim\" -> \"I made a new dish\" (NEVER \"I ate new food\").\n"
-    "   - Example: \"Chichvor\" / \"Chichvordi\" -> \"Screw it / Messed it up\".\n"
-    "   - Example: \"Yorvording jigar\" -> \"You nailed it, bro!\".\n"
-    "3. If the input text is in ANY OTHER LANGUAGE (English, Russian, Turkish, Arabic, German, Hindi, Korean, Chinese, etc.) — whether it is:\n"
-    "   - Street slang, profanity, idioms, or casual chat (e.g. \"People who aren't girls piss me off\", \"I'm broke\", \"he ghosted me\"),\n"
-    "   - Internet abbreviations/shorthand (e.g. \"idk what to do tbh\", \"ngl\", \"iykyk\", \"brb\", \"imo\"),\n"
-    "   - Literary, bookish, formal, academic, poetic, or news text,\n"
-    "   translate it into natural, accurate, fluent Uzbek (`dst_lang`: \"uz\").\n"
-    "   - For slang & casual speech: translate into living, natural spoken Uzbek as real people speak (e.g. \"People who aren't girls piss me off\" -> \"Qiz bola bo'lmagan odamlar asabimni buzadi\", NEVER stiff word-for-word calques like \"meni g'azablantiradi\" or \"men buzildim\").\n"
-    "   - For literary/formal/bookish text: use rich, eloquent, grammatically flawless Uzbek preserving the full meaning and style.\n"
-    "4. Return ONLY valid JSON: {\"src_lang\": \"<2-letter code>\", \"dst_lang\": \"uz\" or \"en\", \"translated\": \"<translated text>\"}"
-)
+def build_gemini_prompt(target_lang: str = "en", native_lang: str = "uz") -> str:
+    native_name = LANG_NAMES.get(native_lang, (native_lang.upper(), "🌐"))[0]
+    target_name = LANG_NAMES.get(target_lang, (target_lang.upper(), "🌐"))[0]
+
+    return (
+        f"You are an elite, native-level multilingual translator.\n"
+        f"RULES:\n"
+        f"1. Detect the source language (`src_lang`: ISO 2-letter code like `en`, `ru`, `tr`, `ar`, `de`, `fr`, `es`, `zh`, `ko`, `ja`, `fa`, `hi`, `kk`, `ky`, `tg`, `az`, `uz`, etc.).\n"
+        f"2. If the input text is in {native_name} (`src_lang`: \"{native_lang}\") — including conversational speech, slang, street slang, dialects, shortened words, or Cyrillic — translate it into natural, idiomatic {target_name} (`dst_lang`: \"{target_lang}\").\n"
+        f"3. If the input text is in {target_name} (`src_lang`: \"{target_lang}\") or ANY OTHER LANGUAGE — whether street slang, idioms, chat shorthand, internet abbreviations, or formal/literary/news text — translate it into natural, accurate, fluent {native_name} (`dst_lang`: \"{native_lang}\").\n"
+        f"   - For slang & casual speech: translate into living, natural spoken style as real people speak.\n"
+        f"   - For literary/formal/bookish text: use rich, eloquent, grammatically flawless style preserving the full meaning and style.\n"
+        f"4. Return ONLY valid JSON: {{\"src_lang\": \"<detected 2-letter code>\", \"dst_lang\": \"{target_lang}\" or \"{native_lang}\", \"translated\": \"<translated text>\"}}"
+    )
 
 
 async def _call_gemini_ai(
-    session: aiohttp.ClientSession, text: str, api_key: str
+    session: aiohttp.ClientSession,
+    text: str,
+    api_key: str,
+    target_lang: str = "en",
+    native_lang: str = "uz",
 ) -> Optional[Tuple[str, str, str]]:
     models_to_try = [
         ("gemini-3.5-flash", False),
@@ -509,6 +544,8 @@ async def _call_gemini_ai(
         ("gemini-flash-lite-latest", False),
         ("gemini-2.5-flash", True),
     ]
+
+    sys_prompt = build_gemini_prompt(target_lang=target_lang, native_lang=native_lang)
 
     for model_name, use_thinking_zero in models_to_try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
@@ -521,7 +558,7 @@ async def _call_gemini_ai(
             gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
 
         payload = {
-            "systemInstruction": {"parts": [{"text": GEMINI_SYSTEM_PROMPT}]},
+            "systemInstruction": {"parts": [{"text": sys_prompt}]},
             "contents": [{"parts": [{"text": text}]}],
             "generationConfig": gen_cfg,
         }
@@ -544,15 +581,15 @@ async def _call_gemini_ai(
                                     tr = str(parsed.get("translated", "")).strip()
                                     src_l = str(parsed.get("src_lang", "")).strip() or "en"
                                     dst_l = str(parsed.get("dst_lang", "")).strip()
-                                    if dst_l not in ("uz", "en"):
-                                        dst_l = "en" if src_l == "uz" else "uz"
+                                    if not dst_l:
+                                        dst_l = target_lang if src_l == native_lang else native_lang
                                     if tr:
                                         return tr, src_l, dst_l
                             except Exception:
                                 if raw_out:
-                                    is_uz = is_likely_uzbek(text)
-                                    src_l = "uz" if is_uz else "en"
-                                    dst_l = "en" if is_uz else "uz"
+                                    is_nat = is_likely_uzbek(text) if native_lang == "uz" else False
+                                    src_l = native_lang if is_nat else "auto"
+                                    dst_l = target_lang if is_nat else native_lang
                                     return raw_out, src_l, dst_l
         except Exception as e:
             logger.warning(f"Gemini AI ({model_name}) error: {e}")
@@ -601,8 +638,18 @@ async def _call_groq_ai(
     return None
 
 
-async def smart_translate(text: str, gemini_api_key: str = "") -> Dict[str, str]:
+async def smart_translate(
+    text: str,
+    target_lang: str = "en",
+    native_lang: str = "uz",
+    gemini_api_key: str = "",
+) -> Dict[str, str]:
     clean_text = text.strip()
+    target_lang = target_lang or "en"
+    native_lang = native_lang or "uz"
+    target_name, target_flag = LANG_NAMES.get(target_lang, (target_lang.upper(), "🌐"))
+    native_name, native_flag = LANG_NAMES.get(native_lang, (native_lang.upper(), "🌐"))
+
     if not clean_text:
         return {
             "original": "",
@@ -610,7 +657,9 @@ async def smart_translate(text: str, gemini_api_key: str = "") -> Dict[str, str]
             "src_lang": "",
             "src_name": "",
             "flag": "",
-            "dst_lang": "uz",
+            "dst_lang": target_lang,
+            "dst_name": target_name,
+            "dst_flag": target_flag,
         }
 
     active_key = gemini_api_key.strip() or FALLBACK_GEMINI_KEY
@@ -622,7 +671,7 @@ async def smart_translate(text: str, gemini_api_key: str = "") -> Dict[str, str]
     lower_clean = normalized_text.lower().strip("?!.,;:")
 
     # 1. Exact match for common conversational idioms & phrases
-    if lower_clean in CONVERSATIONAL_IDIOMS:
+    if native_lang == "uz" and lower_clean in CONVERSATIONAL_IDIOMS:
         tr, sl, sn, sf, dn = CONVERSATIONAL_IDIOMS[lower_clean]
         return {
             "original": clean_text,
@@ -636,7 +685,7 @@ async def smart_translate(text: str, gemini_api_key: str = "") -> Dict[str, str]
         }
 
     # 2. Exact match for common Internet slang & acronyms (e.g. idk, iykyk, tbh, ngl)
-    if lower_clean in SLANG_EXACT_MAP:
+    if native_lang == "uz" and lower_clean in SLANG_EXACT_MAP:
         tr, sl, sn, sf, dn = SLANG_EXACT_MAP[lower_clean]
         return {
             "original": clean_text,
@@ -649,8 +698,8 @@ async def smart_translate(text: str, gemini_api_key: str = "") -> Dict[str, str]
             "dst_flag": "🇺🇿",
         }
 
-    # 3. Quick exact dictionary for common short Uzbek conversational words
-    if lower_clean in UZBEK_QUICK_DICT:
+    # 3. Quick exact dictionary for common short Uzbek conversational words (only if uz -> en)
+    if native_lang == "uz" and target_lang == "en" and lower_clean in UZBEK_QUICK_DICT:
         return {
             "original": clean_text,
             "translated": UZBEK_QUICK_DICT[lower_clean],
@@ -669,11 +718,23 @@ async def smart_translate(text: str, gemini_api_key: str = "") -> Dict[str, str]
             if active_key.startswith("gsk_"):
                 ai_res = await _call_groq_ai(session, clean_text, active_key)
             else:
-                ai_res = await _call_gemini_ai(session, clean_text, active_key)
+                ai_res = await _call_gemini_ai(
+                    session,
+                    clean_text,
+                    active_key,
+                    target_lang=target_lang,
+                    native_lang=native_lang,
+                )
             if ai_res:
                 ai_tr, ai_src, ai_dst = ai_res
                 src_n, src_f = LANG_NAMES.get(ai_src, (ai_src.upper(), "🌐"))
-                dst_n, dst_f = LANG_NAMES.get(ai_dst, ("O'zbekcha", "🇺🇿"))
+                dst_n, dst_f = LANG_NAMES.get(
+                    ai_dst,
+                    (
+                        target_name if ai_src == native_lang else native_name,
+                        target_flag if ai_src == native_lang else native_flag,
+                    ),
+                )
                 return {
                     "original": clean_text,
                     "translated": ai_tr,
@@ -690,42 +751,48 @@ async def smart_translate(text: str, gemini_api_key: str = "") -> Dict[str, str]
         for pat, repl in SLANG_EXPAND.items():
             expanded_text = re.sub(pat, repl, expanded_text, flags=re.IGNORECASE)
 
-        # 5. If heuristics detect Uzbek, translate uz -> en directly
-        if is_likely_uzbek(expanded_text):
-            tr_text, _ = await _translate_multi_layer(session, expanded_text, "uz", "en")
+        # 5. If heuristics detect native language (e.g. Uzbek), translate native -> target directly
+        is_native = is_likely_uzbek(expanded_text) if native_lang == "uz" else False
+        if is_native:
+            tr_text, _ = await _translate_multi_layer(
+                session, expanded_text, native_lang, target_lang
+            )
             return {
                 "original": clean_text,
                 "translated": tr_text,
-                "src_lang": "uz",
-                "src_name": "O'zbekcha",
-                "flag": "🇺🇿",
-                "dst_lang": "en",
-                "dst_name": "Inglizcha",
-                "dst_flag": "🇬🇧",
+                "src_lang": native_lang,
+                "src_name": native_name,
+                "flag": native_flag,
+                "dst_lang": target_lang,
+                "dst_name": target_name,
+                "dst_flag": target_flag,
             }
 
-        # 6. Otherwise translate auto -> uz
+        # 6. Otherwise translate auto -> native_lang
         tr_text, detected_src = await _translate_multi_layer(
-            session, expanded_text, "auto", "uz"
+            session, expanded_text, "auto", native_lang
         )
 
-        # 7. If Google explicitly detected the input as Uzbek ('uz'), translate 'uz' -> 'en'
-        if detected_src == "uz":
-            en_tr, _ = await _translate_multi_layer(session, expanded_text, "uz", "en")
+        # 7. If detected as native_lang, translate native_lang -> target_lang
+        if detected_src == native_lang:
+            target_tr, _ = await _translate_multi_layer(
+                session, expanded_text, native_lang, target_lang
+            )
             return {
                 "original": clean_text,
-                "translated": en_tr,
-                "src_lang": "uz",
-                "src_name": "O'zbekcha",
-                "flag": "🇺🇿",
-                "dst_lang": "en",
-                "dst_name": "Inglizcha",
-                "dst_flag": "🇬🇧",
+                "translated": target_tr,
+                "src_lang": native_lang,
+                "src_name": native_name,
+                "flag": native_flag,
+                "dst_lang": target_lang,
+                "dst_name": target_name,
+                "dst_flag": target_flag,
             }
 
-        # Fix robotic machine translations into natural Uzbek
-        for pat, repl in ROBOTIC_FIXES:
-            tr_text = re.sub(pat, repl, tr_text, flags=re.IGNORECASE)
+        # Fix robotic machine translations into natural Uzbek if native is Uzbek
+        if native_lang == "uz":
+            for pat, repl in ROBOTIC_FIXES:
+                tr_text = re.sub(pat, repl, tr_text, flags=re.IGNORECASE)
 
         src_name, src_flag = LANG_NAMES.get(detected_src, (detected_src.upper(), "🌐"))
         return {
@@ -734,9 +801,9 @@ async def smart_translate(text: str, gemini_api_key: str = "") -> Dict[str, str]
             "src_lang": detected_src,
             "src_name": src_name,
             "flag": src_flag,
-            "dst_lang": "uz",
-            "dst_name": "O'zbekcha",
-            "dst_flag": "🇺🇿",
+            "dst_lang": native_lang,
+            "dst_name": native_name,
+            "dst_flag": native_flag,
         }
 
 
@@ -762,6 +829,8 @@ async def _call_gemini_media_ai(
     mime_type: str,
     prompt_text: str,
     api_key: str,
+    target_lang: str = "en",
+    native_lang: str = "uz",
 ) -> Optional[Tuple[str, str, str]]:
     b64_data = base64.b64encode(media_bytes).decode("utf-8")
     models_to_try = [
@@ -771,6 +840,16 @@ async def _call_gemini_media_ai(
         ("gemini-flash-lite-latest", False),
         ("gemini-2.5-flash", True),
     ]
+
+    native_name = LANG_NAMES.get(native_lang, (native_lang.upper(), "🌐"))[0]
+    target_name = LANG_NAMES.get(target_lang, (target_lang.upper(), "🌐"))[0]
+    media_sys_prompt = (
+        f"You are an elite multimodal translator. Analyze media (images, stickers, GIFs, videos, audio/voice).\n"
+        f"If text/speech is in {native_name}, translate it into {target_name} (`dst_lang`: \"{target_lang}\").\n"
+        f"If text/speech is in {target_name} or any other language, translate it into {native_name} (`dst_lang`: \"{native_lang}\").\n"
+        f"Keep translations living, idiomatic, and accurate.\n"
+        f"Return ONLY valid JSON: {{\"src_lang\": \"<2-letter code>\", \"dst_lang\": \"{target_lang}\" or \"{native_lang}\", \"translated\": \"<translated text>\"}}"
+    )
 
     for model_name, use_thinking_zero in models_to_try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
@@ -783,7 +862,7 @@ async def _call_gemini_media_ai(
             gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
 
         payload = {
-            "systemInstruction": {"parts": [{"text": GEMINI_MEDIA_SYSTEM_PROMPT}]},
+            "systemInstruction": {"parts": [{"text": media_sys_prompt}]},
             "contents": [
                 {
                     "parts": [
@@ -815,13 +894,17 @@ async def _call_gemini_media_ai(
                                         str(parsed.get("src_lang", "")).strip() or "en"
                                     )
                                     dst_l = str(parsed.get("dst_lang", "")).strip()
-                                    if dst_l not in ("uz", "en"):
-                                        dst_l = "en" if src_l == "uz" else "uz"
+                                    if not dst_l:
+                                        dst_l = (
+                                            target_lang
+                                            if src_l == native_lang
+                                            else native_lang
+                                        )
                                     if tr:
                                         return tr, src_l, dst_l
                             except Exception:
                                 if raw_out:
-                                    return raw_out, "en", "uz"
+                                    return raw_out, "auto", native_lang
         except Exception as e:
             logger.warning(f"Gemini Media AI ({model_name}) error: {e}")
     return None
@@ -831,10 +914,16 @@ async def smart_translate_media(
     media_bytes: Optional[bytes],
     mime_type: str = "image/jpeg",
     extra_context: str = "",
-    media_kind: str = "image",  # "video", "gif", "sticker", "image"
+    media_kind: str = "image",  # "video", "gif", "sticker", "image", "voice", "audio"
+    target_lang: str = "en",
+    native_lang: str = "uz",
     gemini_api_key: str = "",
 ) -> Dict[str, str]:
     active_key = gemini_api_key.strip() or FALLBACK_GEMINI_KEY
+    target_lang = target_lang or "en"
+    native_lang = native_lang or "uz"
+    target_name, target_flag = LANG_NAMES.get(target_lang, (target_lang.upper(), "🌐"))
+    native_name, native_flag = LANG_NAMES.get(native_lang, (native_lang.upper(), "🌐"))
 
     default_flags = {
         "video": ("Video", "🎬"),
@@ -849,70 +938,87 @@ async def smart_translate_media(
     if not media_bytes:
         if extra_context:
             prompt = (
-                f"Explain the meaning/emotion of this Telegram sticker emoji in natural Uzbek and English: {extra_context}"
+                f"Explain the meaning/emotion of this Telegram sticker emoji in natural {native_name} and {target_name}: {extra_context}"
                 if media_kind == "sticker"
                 else extra_context
             )
-            return await smart_translate(prompt, gemini_api_key=active_key)
+            return await smart_translate(
+                prompt,
+                target_lang=target_lang,
+                native_lang=native_lang,
+                gemini_api_key=active_key,
+            )
         return {
             "original": "",
             "translated": "",
             "src_lang": "en",
             "src_name": def_name,
             "flag": def_flag,
-            "dst_lang": "uz",
-            "dst_name": "O'zbekcha",
-            "dst_flag": "🇺🇿",
+            "dst_lang": native_lang,
+            "dst_name": native_name,
+            "dst_flag": native_flag,
         }
 
     if media_kind == "video":
         prompt_text = (
-            "This is a video clip. Carefully listen to any spoken speech/dialogue and read any text or subtitles on screen. "
-            "Translate all spoken dialogue and on-screen text into natural Uzbek (or into English if the source is Uzbek). "
+            f"This is a video clip. Carefully listen to any spoken speech/dialogue and read any text or subtitles on screen. "
+            f"Translate all spoken dialogue and on-screen text into natural {native_name} (or into {target_name} if the source is {native_name}). "
             + (f"User caption/context: {extra_context}. " if extra_context else "")
-            + "If there is no dialogue or text at all, summarize what happens in the video in Uzbek (with English in parentheses)."
+            + f"If there is no dialogue or text at all, summarize what happens in the video in {native_name} (with {target_name} in parentheses)."
         )
     elif media_kind == "gif":
         prompt_text = (
-            "This is a GIF animation. Read any text on the GIF and translate it into natural Uzbek (or into English if the source is Uzbek). "
+            f"This is a GIF animation. Read any text on the GIF and translate it into natural {native_name} (or into {target_name} if the source is {native_name}). "
             + (f"User caption/context: {extra_context}. " if extra_context else "")
-            + "If there is no text on the GIF, explain what happens in the animation and its humor/meaning in Uzbek (with English in parentheses)."
+            + f"If there is no text on the GIF, explain what happens in the animation and its humor/meaning in {native_name} (with {target_name} in parentheses)."
         )
     elif media_kind == "sticker":
         prompt_text = (
             "This image is a Telegram sticker. "
             + (f"Associated emoji/context: {extra_context}. " if extra_context else "")
-            + "If there is any text written on the sticker, read and translate it naturally (into Uzbek if non-Uzbek, or into English if Uzbek). "
-            "If there is no text on the sticker, translate its emotion/meaning into natural Uzbek (with English in parentheses)."
+            + f"If there is any text written on the sticker, read and translate it naturally (into {native_name} if non-{native_name}, or into {target_name} if {native_name}). "
+            f"If there is no text on the sticker, translate its emotion/meaning into natural {native_name} (with {target_name} in parentheses)."
         )
     elif media_kind in ("voice", "audio"):
         prompt_text = (
-            "This is an audio recording/voice message. Listen carefully to the spoken dialogue and speech. "
-            "Transcribe and translate all spoken words into natural, living Uzbek (or into English if the speaker speaks Uzbek). "
+            f"This is an audio recording/voice message. Listen carefully to the spoken dialogue and speech. "
+            f"Transcribe and translate all spoken words into natural, living {native_name} (or into {target_name} if the speaker speaks {native_name}). "
             + (f"User caption/context: {extra_context}. " if extra_context else "")
-            + "If there is no speech, describe what is heard in Uzbek (with English in parentheses)."
+            + f"If there is no speech, describe what is heard in {native_name} (with {target_name} in parentheses)."
         )
     else:
         prompt_text = (
-            "Read all text in this image and translate it naturally (into Uzbek if non-Uzbek, or into English if Uzbek). "
+            f"Read all text in this image and translate it naturally (into {native_name} if non-{native_name}, or into {target_name} if {native_name}). "
             + (
                 f"Also translate/include this caption: {extra_context}. "
                 if extra_context
                 else ""
             )
-            + "If there is no text in the image at all, identify what is shown in the image in Uzbek (with English in parentheses)."
+            + f"If there is no text in the image at all, identify what is shown in the image in {native_name} (with {target_name} in parentheses)."
         )
 
     connector = _create_connector()
     async with aiohttp.ClientSession(connector=connector) as session:
         if active_key and not active_key.startswith("gsk_"):
             ai_res = await _call_gemini_media_ai(
-                session, media_bytes, mime_type, prompt_text, active_key
+                session,
+                media_bytes,
+                mime_type,
+                prompt_text,
+                active_key,
+                target_lang=target_lang,
+                native_lang=native_lang,
             )
             if ai_res:
                 ai_tr, ai_src, ai_dst = ai_res
                 src_n, src_f = LANG_NAMES.get(ai_src, (ai_src.upper(), def_flag))
-                dst_n, dst_f = LANG_NAMES.get(ai_dst, ("O'zbekcha", "🇺🇿"))
+                dst_n, dst_f = LANG_NAMES.get(
+                    ai_dst,
+                    (
+                        target_name if ai_src == native_lang else native_name,
+                        target_flag if ai_src == native_lang else native_flag,
+                    ),
+                )
                 return {
                     "original": extra_context,
                     "translated": ai_tr,
@@ -925,7 +1031,12 @@ async def smart_translate_media(
                 }
 
     if extra_context:
-        return await smart_translate(extra_context, gemini_api_key=active_key)
+        return await smart_translate(
+            extra_context,
+            target_lang=target_lang,
+            native_lang=native_lang,
+            gemini_api_key=active_key,
+        )
 
     return {
         "original": "",
@@ -933,9 +1044,9 @@ async def smart_translate_media(
         "src_lang": "en",
         "src_name": def_name,
         "flag": def_flag,
-        "dst_lang": "uz",
-        "dst_name": "O'zbekcha",
-        "dst_flag": "🇺🇿",
+        "dst_lang": native_lang,
+        "dst_name": native_name,
+        "dst_flag": native_flag,
     }
 
 
@@ -944,6 +1055,8 @@ async def smart_translate_image(
     mime_type: str = "image/jpeg",
     extra_context: str = "",
     is_sticker: bool = False,
+    target_lang: str = "en",
+    native_lang: str = "uz",
     gemini_api_key: str = "",
 ) -> Dict[str, str]:
     kind = "sticker" if is_sticker else "image"
@@ -952,6 +1065,8 @@ async def smart_translate_image(
         mime_type=mime_type,
         extra_context=extra_context,
         media_kind=kind,
+        target_lang=target_lang,
+        native_lang=native_lang,
         gemini_api_key=gemini_api_key,
     )
 
@@ -967,8 +1082,28 @@ VOICE_MAP = {
     "es": "es-ES-ElviraNeural",
     "ko": "ko-KR-SunHiNeural",
     "zh": "zh-CN-XiaoxiaoNeural",
+    "zh-CN": "zh-CN-XiaoxiaoNeural",
     "ja": "ja-JP-NanamiNeural",
     "it": "it-IT-ElsaNeural",
+    "kk": "kk-KZ-AigulNeural",
+    "pt": "pt-BR-FranciscaNeural",
+    "hi": "hi-IN-SwaraNeural",
+    "uk": "uk-UA-PolinaNeural",
+    "pl": "pl-PL-ZofiaNeural",
+    "nl": "nl-NL-FennaNeural",
+    "id": "id-ID-GadisNeural",
+    "sv": "sv-SE-SofieNeural",
+    "cs": "cs-CZ-VlastaNeural",
+    "da": "da-DK-ChristelNeural",
+    "fi": "fi-FI-NooraNeural",
+    "el": "el-GR-AthinaNeural",
+    "he": "he-IL-HilaNeural",
+    "hu": "hu-HU-NoemiNeural",
+    "no": "nb-NO-PernilleNeural",
+    "ro": "ro-RO-AlinaNeural",
+    "sk": "sk-SK-ViktoriaNeural",
+    "th": "th-TH-PremwadeeNeural",
+    "vi": "vi-VN-HoaiMyNeural",
 }
 
 
