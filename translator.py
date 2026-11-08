@@ -1,5 +1,6 @@
 import base64
 import html
+import io
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ from typing import Dict, Optional, Tuple
 
 import aiohttp
 import certifi
+import edge_tts
 
 logger = logging.getLogger("tarjimon_bot.translator")
 
@@ -839,6 +841,8 @@ async def smart_translate_media(
         "gif": ("GIF", "🎞"),
         "sticker": ("Stiker", "🎭"),
         "image": ("Rasm", "🖼"),
+        "voice": ("Ovozli xabar", "🎙"),
+        "audio": ("Audio", "🎵"),
     }
     def_name, def_flag = default_flags.get(media_kind, ("Media", "📁"))
 
@@ -880,6 +884,13 @@ async def smart_translate_media(
             + (f"Associated emoji/context: {extra_context}. " if extra_context else "")
             + "If there is any text written on the sticker, read and translate it naturally (into Uzbek if non-Uzbek, or into English if Uzbek). "
             "If there is no text on the sticker, translate its emotion/meaning into natural Uzbek (with English in parentheses)."
+        )
+    elif media_kind in ("voice", "audio"):
+        prompt_text = (
+            "This is an audio recording/voice message. Listen carefully to the spoken dialogue and speech. "
+            "Transcribe and translate all spoken words into natural, living Uzbek (or into English if the speaker speaks Uzbek). "
+            + (f"User caption/context: {extra_context}. " if extra_context else "")
+            + "If there is no speech, describe what is heard in Uzbek (with English in parentheses)."
         )
     else:
         prompt_text = (
@@ -943,3 +954,209 @@ async def smart_translate_image(
         media_kind=kind,
         gemini_api_key=gemini_api_key,
     )
+
+
+VOICE_MAP = {
+    "uz": "uz-UZ-MadinaNeural",
+    "en": "en-US-JennyNeural",
+    "ru": "ru-RU-SvetlanaNeural",
+    "tr": "tr-TR-EmelNeural",
+    "ar": "ar-SA-ZariyahNeural",
+    "de": "de-DE-KatjaNeural",
+    "fr": "fr-FR-DeniseNeural",
+    "es": "es-ES-ElviraNeural",
+    "ko": "ko-KR-SunHiNeural",
+    "zh": "zh-CN-XiaoxiaoNeural",
+    "ja": "ja-JP-NanamiNeural",
+    "it": "it-IT-ElsaNeural",
+}
+
+
+async def generate_speech(text: str, lang_code: str = "en") -> Optional[bytes]:
+    clean = re.sub(r"<[^>]+>", "", text).strip()
+    clean = re.sub(r"https?://\S+", "", clean).strip()
+    if not clean:
+        return None
+    if len(clean) > 1200:
+        clean = clean[:1200]
+    voice = VOICE_MAP.get(lang_code, "en-US-JennyNeural")
+    try:
+        tts = edge_tts.Communicate(clean, voice)
+        buf = io.BytesIO()
+        async for chunk in tts.stream():
+            if chunk["type"] == "audio":
+                buf.write(chunk["data"])
+        return buf.getvalue()
+    except Exception as e:
+        logger.warning(f"TTS error ({lang_code}): {e}")
+        return None
+
+
+async def translate_to_language(
+    text: str, target_lang_code: str, gemini_api_key: str = ""
+) -> Dict[str, str]:
+    active_key = gemini_api_key.strip() or FALLBACK_GEMINI_KEY
+    target_name, target_flag = LANG_NAMES.get(
+        target_lang_code, (target_lang_code.upper(), "🌐")
+    )
+
+    prompt = (
+        f"You are an elite multilingual translator. "
+        f"Translate the following text into {target_name} ({target_lang_code}). "
+        "Keep the translation natural, living, and true to the original tone (slang, formal, conversational, etc.). "
+        f"Return ONLY valid JSON: {{\"src_lang\": \"<detect 2-letter source code>\", \"dst_lang\": \"{target_lang_code}\", \"translated\": \"<translated text>\"}}\n\n"
+        f"Text:\n{text}"
+    )
+
+    models_to_try = [
+        ("gemini-3.5-flash", False),
+        ("gemini-3.5-flash-lite", False),
+        ("gemini-3.1-flash-lite", False),
+        ("gemini-flash-lite-latest", False),
+        ("gemini-2.5-flash", True),
+    ]
+
+    connector = _create_connector()
+    async with aiohttp.ClientSession(connector=connector) as session:
+        for model_name, use_thinking_zero in models_to_try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={active_key}"
+            gen_cfg: Dict[str, object] = {
+                "temperature": 0.2,
+                "maxOutputTokens": 2048,
+                "responseMimeType": "application/json",
+            }
+            if use_thinking_zero:
+                gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": gen_cfg,
+            }
+            try:
+                async with session.post(
+                    url, json=payload, timeout=aiohttp.ClientTimeout(total=8)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json(content_type=None)
+                        candidates = data.get("candidates", [])
+                        if candidates:
+                            parts = candidates[0].get("content", {}).get("parts", [])
+                            if parts and "text" in parts[0]:
+                                raw_out = parts[0]["text"].strip()
+                                parsed = json.loads(raw_out)
+                                if isinstance(parsed, list) and parsed:
+                                    parsed = parsed[0]
+                                if isinstance(parsed, dict):
+                                    tr = str(parsed.get("translated", "")).strip()
+                                    src_l = (
+                                        str(parsed.get("src_lang", "")).strip() or "auto"
+                                    )
+                                    src_n, src_f = LANG_NAMES.get(
+                                        src_l, (src_l.upper(), "🌐")
+                                    )
+                                    return {
+                                        "original": text,
+                                        "translated": tr,
+                                        "src_lang": src_l,
+                                        "src_name": src_n,
+                                        "flag": src_f,
+                                        "dst_lang": target_lang_code,
+                                        "dst_name": target_name,
+                                        "dst_flag": target_flag,
+                                    }
+            except Exception as e:
+                logger.warning(f"translate_to_language ({model_name}) error: {e}")
+
+    # Fallback to multi-layer translation
+    connector = _create_connector()
+    async with aiohttp.ClientSession(connector=connector) as session:
+        tr_text, det_src = await _translate_multi_layer(
+            session, text, "auto", target_lang_code
+        )
+        src_n, src_f = LANG_NAMES.get(det_src, (det_src.upper(), "🌐"))
+        return {
+            "original": text,
+            "translated": tr_text,
+            "src_lang": det_src,
+            "src_name": src_n,
+            "flag": src_f,
+            "dst_lang": target_lang_code,
+            "dst_name": target_name,
+            "dst_flag": target_flag,
+        }
+
+
+async def smart_translate_pdf(
+    pdf_bytes: bytes, action: str = "summary", gemini_api_key: str = ""
+) -> str:
+    active_key = gemini_api_key.strip() or FALLBACK_GEMINI_KEY
+    b64_data = base64.b64encode(pdf_bytes).decode("utf-8")
+
+    if action in ("summary", "sum"):
+        prompt = (
+            "Ushbu PDF hujjatini (yoki kitobini) to'liq tahlil qiling va o'zbek tilida chuqur, chiroyli va qiziqarli qilib tushuntiring:\n"
+            "1. 📖 Asarning to'liq va batafsil syujet bayoni (mazmuni).\n"
+            "2. 👤 Asosiy qahramonlar va ularning xarakterlari tahlili.\n"
+            "3. 💡 Asarning bosh g'oyasi, falsafasi va ibratli jihatlari.\n"
+            "Format: sarlavhalar va qulay abzaslar bilan chiroyli o'zbek tilida yozing."
+        )
+    elif action in ("pages_10", "p10"):
+        prompt = (
+            "Ushbu PDF hujjatining dastlabki 1-10 sahifalarini to'liq o'qing va barcha matnni "
+            "ravon, aniq va adabiy o'zbek tiliga tarjima qiling. Mazmunni tushirib qoldirmang."
+        )
+    elif action in ("chapter_1", "ch1"):
+        prompt = (
+            "Ushbu PDF kitobining 1-bobini (yoki boshlang'ich kirish qismini) o'qing va "
+            "to'liq adabiy o'zbek tiliga tarjima qilib bering."
+        )
+    else:  # full / file
+        prompt = (
+            "Ushbu PDF hujjatining matnini o'zbek tiliga to'liq, mukammal va aniq tarjima qilib bering. "
+            "Barcha asosiy bo'limlarni qamrab oling."
+        )
+
+    models_to_try = [
+        ("gemini-3.5-flash", False),
+        ("gemini-3.5-flash-lite", False),
+        ("gemini-3.1-flash-lite", False),
+        ("gemini-flash-lite-latest", False),
+    ]
+
+    connector = _create_connector()
+    async with aiohttp.ClientSession(connector=connector) as session:
+        for model_name, _ in models_to_try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={active_key}"
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "inlineData": {
+                                    "mimeType": "application/pdf",
+                                    "data": b64_data,
+                                }
+                            },
+                            {"text": prompt},
+                        ]
+                    }
+                ],
+                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 4096},
+            }
+            try:
+                async with session.post(
+                    url, json=payload, timeout=aiohttp.ClientTimeout(total=40)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json(content_type=None)
+                        candidates = data.get("candidates", [])
+                        if candidates:
+                            parts = candidates[0].get("content", {}).get("parts", [])
+                            if parts and "text" in parts[0]:
+                                text = parts[0]["text"].strip()
+                                if text:
+                                    return text
+            except Exception as e:
+                logger.warning(f"smart_translate_pdf ({model_name}) error: {e}")
+
+    return "❌ PDF hujjatini tahlil qilishda xatolik yuz berdi. Iltimos qaytadan urinib ko'ring."
+

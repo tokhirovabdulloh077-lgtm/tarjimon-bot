@@ -6,7 +6,9 @@ import os
 import re
 import socket
 import ssl
-from typing import Optional, Tuple
+import time
+import uuid
+from typing import Dict, Optional, Tuple
 import aiohttp
 import certifi
 from aiohttp import web
@@ -16,6 +18,10 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     BotCommand,
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     InlineQuery,
     InlineQueryResultArticle,
     InputTextMessageContent,
@@ -35,7 +41,14 @@ from database import (
     set_setting,
     upsert_user,
 )
-from translator import smart_translate, smart_translate_media
+from translator import (
+    LANG_NAMES,
+    generate_speech,
+    smart_translate,
+    smart_translate_media,
+    smart_translate_pdf,
+    translate_to_language,
+)
 
 load_dotenv()
 
@@ -47,9 +60,58 @@ logger = logging.getLogger("tarjimon_bot")
 
 router = Router()
 BOT_USERNAME: str = ""
-DEPLOY_VERSION = "v6.2-media-pro"
+DEPLOY_VERSION = "v6.3-pro-features"
 MAX_MEDIA_SIZE_MB = 20
 MAX_MEDIA_SIZE_BYTES = MAX_MEDIA_SIZE_MB * 1024 * 1024
+
+translation_cache: Dict[str, Dict] = {}
+pdf_cache: Dict[str, Dict] = {}
+
+
+def clean_caches() -> None:
+    now = time.time()
+    if len(translation_cache) > 400:
+        keys_to_del = [
+            k for k, v in translation_cache.items() if now - v.get("time", 0) > 7200
+        ]
+        for k in keys_to_del:
+            translation_cache.pop(k, None)
+    if len(pdf_cache) > 100:
+        keys_to_del = [
+            k for k, v in pdf_cache.items() if now - v.get("time", 0) > 7200
+        ]
+        for k in keys_to_del:
+            pdf_cache.pop(k, None)
+
+
+def build_translation_markup(
+    job_id: str, current_dst: str = "uz"
+) -> InlineKeyboardMarkup:
+    tts_btn = InlineKeyboardButton(
+        text="🔊 Talaffuz (Eshitish)", callback_data=f"tts:{job_id}"
+    )
+
+    all_langs = [
+        ("uz", "🇺🇿 O'zbekcha"),
+        ("en", "🇬🇧 Inglizcha"),
+        ("ru", "🇷🇺 Ruscha"),
+        ("tr", "🇹🇷 Turkcha"),
+        ("ar", "🇸🇦 Arabcha"),
+        ("de", "🇩🇪 Nemischa"),
+        ("ko", "🇰🇷 Koreyscha"),
+    ]
+    other_langs = [l for l in all_langs if l[0] != current_dst]
+
+    row1 = [
+        InlineKeyboardButton(text=l[1], callback_data=f"lang:{l[0]}:{job_id}")
+        for l in other_langs[:3]
+    ]
+    row2 = [
+        InlineKeyboardButton(text=l[1], callback_data=f"lang:{l[0]}:{job_id}")
+        for l in other_langs[3:6]
+    ]
+
+    return InlineKeyboardMarkup(inline_keyboard=[[tts_btn], row1, row2])
 
 
 class MediaTooLargeError(Exception):
@@ -90,11 +152,14 @@ async def cmd_start(message: Message) -> None:
 
     text = (
         "👋 <b>Assalomu alaykum! O'zbekcha Tarjimon botiga xush kelibsiz!</b>\n\n"
-        "Menga istalgan tildagi <b>matn, rasm, stiker, GIF yoki video</b> yuboring — "
-        "men uni <b>O'zbek tiliga</b> (adabiy, so'zlashuv yoki sleng uslubida) tabiiy tarjima qilib beraman! 🇺🇿\n\n"
-        "💡 <i>Agar o'zbek tilida yozsangiz, uni ingliz tiliga o'girib beraman! 🇬🇧</i>\n\n"
-        "📹 <i>Maksimal media hajmi: 20 MB</i>\n\n"
-        "✍️ <b>Istalgan so'z, gap, rasm, GIF yoki video yuborib sinab ko'ring!</b>"
+        "Menga istalgan tildagi:\n"
+        "💬 <b>Matn</b> yoki 🎙 <b>Ovozli xabar (Voice)</b>\n"
+        "🖼 <b>Rasm / Skrinshot</b> yoki 🎭 <b>Stiker</b>\n"
+        "🎞 <b>GIF</b> yoki 🎬 <b>Video</b>\n"
+        "📚 <b>PDF Kitob yoki Hujjat</b>\n"
+        "yuboring — men uni <b>O'zbek tiliga</b> tabiiy tarjima qilib beraman! 🇺🇿\n\n"
+        "💡 <i>Har bir tarjima tagida <b>🔊 Talaffuz</b> tugmasi orqali jonli ovozda eshitish va <b>boshqa tillarga o'girish</b> mumkin!</i>\n\n"
+        "📹 <i>Maksimal fayl hajmi: 20 MB</i>"
     )
     await message.answer(text)
 
@@ -227,12 +292,41 @@ async def _extract_media_from_message(
 ) -> Optional[Tuple[Optional[bytes], str, str, str]]:
     """
     Returns (bytes, mime_type, caption, media_kind) where media_kind is:
-    "video", "gif", "sticker", or "image".
+    "video", "gif", "sticker", "image", "voice", "audio", or "pdf".
     Raises MediaTooLargeError if file exceeds MAX_MEDIA_SIZE_BYTES.
     """
     caption = _clean_bot_mention(msg.caption or "")
 
-    # 1. Video
+    # 1. Voice note (round / voice message)
+    if msg.voice:
+        v = msg.voice
+        if v.file_size and v.file_size > MAX_MEDIA_SIZE_BYTES:
+            raise MediaTooLargeError(v.file_size)
+        buf = io.BytesIO()
+        try:
+            await bot.download(v.file_id, destination=buf)
+        except Exception as e:
+            if "too big" in str(e).lower():
+                raise MediaTooLargeError(v.file_size or (MAX_MEDIA_SIZE_BYTES + 1))
+            raise
+        return buf.getvalue(), "audio/ogg", "", "voice"
+
+    # 2. Audio file
+    if msg.audio:
+        a = msg.audio
+        if a.file_size and a.file_size > MAX_MEDIA_SIZE_BYTES:
+            raise MediaTooLargeError(a.file_size)
+        buf = io.BytesIO()
+        try:
+            await bot.download(a.file_id, destination=buf)
+        except Exception as e:
+            if "too big" in str(e).lower():
+                raise MediaTooLargeError(a.file_size or (MAX_MEDIA_SIZE_BYTES + 1))
+            raise
+        mime = a.mime_type or "audio/mp3"
+        return buf.getvalue(), mime, caption, "audio"
+
+    # 3. Video
     if msg.video:
         vid = msg.video
         if vid.file_size and vid.file_size > MAX_MEDIA_SIZE_BYTES:
@@ -247,7 +341,7 @@ async def _extract_media_from_message(
         mime = vid.mime_type or "video/mp4"
         return buf.getvalue(), mime, caption, "video"
 
-    # 2. Animation (GIF)
+    # 4. Animation (GIF)
     if msg.animation:
         anim = msg.animation
         if anim.file_size and anim.file_size > MAX_MEDIA_SIZE_BYTES:
@@ -262,7 +356,7 @@ async def _extract_media_from_message(
         mime = anim.mime_type or "video/mp4"
         return buf.getvalue(), mime, caption, "gif"
 
-    # 3. Video Note (Round video)
+    # 5. Video Note (Round video)
     if msg.video_note:
         vn = msg.video_note
         if vn.file_size and vn.file_size > MAX_MEDIA_SIZE_BYTES:
@@ -276,7 +370,7 @@ async def _extract_media_from_message(
             raise
         return buf.getvalue(), "video/mp4", "", "video"
 
-    # 4. Photo
+    # 6. Photo
     if msg.photo:
         photo = msg.photo[-1]
         if photo.file_size and photo.file_size > MAX_MEDIA_SIZE_BYTES:
@@ -290,7 +384,7 @@ async def _extract_media_from_message(
             raise
         return buf.getvalue(), "image/jpeg", caption, "image"
 
-    # 5. Sticker
+    # 7. Sticker
     if msg.sticker:
         st = msg.sticker
         extra = f"{st.emoji or ''}".strip()
@@ -312,17 +406,33 @@ async def _extract_media_from_message(
             return raw, mime, extra, "sticker"
         return None, "image/webp", extra or "🙂", "sticker"
 
-    # 6. Document (Image, GIF or Video files)
+    # 8. Document (PDF, Image, GIF or Video files)
     if msg.document:
         doc = msg.document
         mime = (doc.mime_type or "").lower()
         name = (doc.file_name or "").lower()
+
+        is_pdf = mime == "application/pdf" or name.endswith(".pdf")
+        if is_pdf:
+            if doc.file_size and doc.file_size > MAX_MEDIA_SIZE_BYTES:
+                raise MediaTooLargeError(doc.file_size)
+            buf = io.BytesIO()
+            try:
+                await bot.download(doc.file_id, destination=buf)
+            except Exception as e:
+                if "too big" in str(e).lower():
+                    raise MediaTooLargeError(doc.file_size or (MAX_MEDIA_SIZE_BYTES + 1))
+                raise
+            return buf.getvalue(), "application/pdf", caption or doc.file_name or "kitob.pdf", "pdf"
+
         is_video = mime.startswith("video/") or any(
-            name.endswith(ext) for ext in [".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"]
+            name.endswith(ext)
+            for ext in [".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"]
         )
         is_gif = mime == "image/gif" or name.endswith(".gif")
         is_image = mime.startswith("image/") or any(
-            name.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp"]
+            name.endswith(ext)
+            for ext in [".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp"]
         )
 
         if is_video or is_gif or is_image:
@@ -372,13 +482,65 @@ async def _process_and_reply_media(
             increment_count=True,
         )
 
+    # Special handling for PDF documents & books
+    if media_kind == "pdf":
+        clean_caches()
+        pdf_job_id = uuid.uuid4().hex[:10]
+        pdf_cache[pdf_job_id] = {
+            "bytes": media_bytes,
+            "name": extra_context or "kitob.pdf",
+            "time": time.time(),
+        }
+        size_mb = len(media_bytes) / (1024 * 1024)
+        pdf_caption = (
+            f"📚 <b>PDF Hujjat / Kitob qabul qilindi:</b>\n"
+            f"📄 Nomi: <code>{html.escape(extra_context or 'kitob.pdf')}</code>\n"
+            f"💾 Hajmi: <b>{size_mb:.2f} MB</b>\n\n"
+            "👇 <b>Qanday tarjima qilishni xohlaysiz? Quyidagi variantlardan birini tanlang:</b>"
+        )
+        pdf_markup = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📖 1-10 betlar tarjimasi",
+                        callback_data=f"pdf:p10:{pdf_job_id}",
+                    ),
+                    InlineKeyboardButton(
+                        text="📝 Kitob tahlili & Mazmuni",
+                        callback_data=f"pdf:sum:{pdf_job_id}",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="📄 1-bob / Boshlang'ich qism",
+                        callback_data=f"pdf:ch1:{pdf_job_id}",
+                    ),
+                    InlineKeyboardButton(
+                        text="📑 To'liq fayl (.txt)",
+                        callback_data=f"pdf:file:{pdf_job_id}",
+                    ),
+                ],
+            ]
+        )
+        await reply_target.reply(pdf_caption, reply_markup=pdf_markup)
+        return True
+
     gemini_key = await get_setting("gemini_api_key", DEFAULT_GEMINI_KEY)
 
     status_msg = None
     if media_kind in ("video", "gif") and media_bytes and len(media_bytes) > 500 * 1024:
         action_name = "Video" if media_kind == "video" else "GIF"
         try:
-            status_msg = await reply_target.reply(f"⏳ <i>{action_name} tahlil qilinmoqda, kuting...</i>")
+            status_msg = await reply_target.reply(
+                f"⏳ <i>{action_name} tahlil qilinmoqda, kuting...</i>"
+            )
+        except Exception:
+            pass
+    elif media_kind in ("voice", "audio"):
+        try:
+            status_msg = await reply_target.reply(
+                "🎙 <i>Ovoz eshitilib, tarjima qilinmoqda...</i>"
+            )
         except Exception:
             pass
 
@@ -396,14 +558,29 @@ async def _process_and_reply_media(
         dst_flag = res.get("dst_flag", "🇺🇿")
         translated = res["translated"]
 
+        clean_caches()
+        job_id = uuid.uuid4().hex[:10]
+        translation_cache[job_id] = {
+            "original": extra_context or translated,
+            "translated": translated,
+            "src_lang": res.get("src_lang", "auto"),
+            "src_name": src_name,
+            "src_flag": src_flag,
+            "dst_lang": res.get("dst_lang", "uz"),
+            "dst_name": dst_name,
+            "dst_flag": dst_flag,
+            "time": time.time(),
+        }
+        markup = build_translation_markup(job_id, res.get("dst_lang", "uz"))
+
         response_text = (
             f"{src_flag} <b>{src_name} ➔ {dst_flag} {dst_name}:</b>\n\n"
             f"<code>{html.escape(translated)}</code>"
         )
         if status_msg:
-            await status_msg.edit_text(response_text)
+            await status_msg.edit_text(response_text, reply_markup=markup)
         else:
-            await reply_target.reply(response_text)
+            await reply_target.reply(response_text, reply_markup=markup)
     except Exception:
         logger.exception("Media translation error")
         err_msg = "❌ Ushbu mediani tarjima qilishda xatolik yuz berdi. Iltimos qaytadan urinib ko'ring."
@@ -414,7 +591,16 @@ async def _process_and_reply_media(
     return True
 
 
-@router.message(F.photo | F.sticker | F.animation | F.video | F.video_note | F.document)
+@router.message(
+    F.photo
+    | F.sticker
+    | F.animation
+    | F.video
+    | F.video_note
+    | F.voice
+    | F.audio
+    | F.document
+)
 async def handle_media_translation(message: Message, bot: Bot) -> None:
     # If document, ensure it is supported media
     if message.document:
@@ -424,8 +610,28 @@ async def handle_media_translation(message: Message, bot: Bot) -> None:
         is_supported = (
             mime.startswith("image/")
             or mime.startswith("video/")
-            or mime == "image/gif"
-            or any(name.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".mov", ".avi", ".mkv", ".webm"])
+            or mime.startswith("audio/")
+            or mime in ("image/gif", "application/pdf")
+            or any(
+                name.endswith(ext)
+                for ext in [
+                    ".jpg",
+                    ".jpeg",
+                    ".png",
+                    ".webp",
+                    ".gif",
+                    ".mp4",
+                    ".mov",
+                    ".avi",
+                    ".mkv",
+                    ".webm",
+                    ".pdf",
+                    ".mp3",
+                    ".ogg",
+                    ".wav",
+                    ".m4a",
+                ]
+            )
         )
         if not is_supported:
             return
@@ -463,7 +669,8 @@ async def handle_translation(message: Message, bot: Bot) -> None:
             message.reply_to_message
             and message.reply_to_message.from_user
             and message.reply_to_message.from_user.username
-            and message.reply_to_message.from_user.username.lower() == BOT_USERNAME.lower()
+            and message.reply_to_message.from_user.username.lower()
+            == BOT_USERNAME.lower()
         )
         is_tagged = bot_tag in text.lower()
 
@@ -502,16 +709,169 @@ async def handle_translation(message: Message, bot: Bot) -> None:
         dst_flag = res.get("dst_flag", "🇺🇿")
         translated = res["translated"]
 
+        clean_caches()
+        job_id = uuid.uuid4().hex[:10]
+        translation_cache[job_id] = {
+            "original": text,
+            "translated": translated,
+            "src_lang": res.get("src_lang", "auto"),
+            "src_name": src_name,
+            "src_flag": src_flag,
+            "dst_lang": res.get("dst_lang", "uz"),
+            "dst_name": dst_name,
+            "dst_flag": dst_flag,
+            "time": time.time(),
+        }
+        markup = build_translation_markup(job_id, res.get("dst_lang", "uz"))
+
         response_text = (
             f"{src_flag} <b>{src_name} ➔ {dst_flag} {dst_name}:</b>\n\n"
             f"<code>{html.escape(translated)}</code>"
         )
-        await message.reply(response_text)
+        await message.reply(response_text, reply_markup=markup)
     except Exception:
         logger.exception("Translation error")
         await message.reply(
             "❌ Matnni tarjima qilishda xatolik yuz berdi. Iltimos qaytadan urinib ko'ring."
         )
+
+
+@router.callback_query(F.data.startswith("tts:"))
+async def on_tts_click(callback: CallbackQuery) -> None:
+    parts = callback.data.split(":", 1)
+    if len(parts) != 2:
+        return
+    job_id = parts[1]
+    item = translation_cache.get(job_id)
+    if not item:
+        await callback.answer(
+            "⚠️ Ushbu tarjima muddati o'tgan yoki topilmadi.", show_alert=True
+        )
+        return
+
+    await callback.answer("🔊 Audio tayyorlanmoqda...")
+    text_to_speak = item.get("translated", "")
+    dst_lang = item.get("dst_lang", "uz")
+
+    audio_bytes = await generate_speech(text_to_speak, dst_lang)
+    if not audio_bytes:
+        await callback.answer(
+            "❌ Ovoz hosil qilishda xatolik yuz berdi.", show_alert=True
+        )
+        return
+
+    lang_name = LANG_NAMES.get(dst_lang, (dst_lang.upper(), "🌐"))[0]
+    preview = (
+        text_to_speak[:120] + "..." if len(text_to_speak) > 120 else text_to_speak
+    )
+    caption = f"🔊 <b>Talaffuz ({lang_name}):</b>\n<code>{html.escape(preview)}</code>"
+    try:
+        await callback.message.reply_voice(
+            voice=BufferedInputFile(
+                audio_bytes, filename=f"pronunciation_{dst_lang}.ogg"
+            ),
+            caption=caption,
+        )
+    except Exception as e:
+        logger.warning(f"reply_voice failed, falling back to reply_audio: {e}")
+        await callback.message.reply_audio(
+            audio=BufferedInputFile(
+                audio_bytes, filename=f"pronunciation_{dst_lang}.mp3"
+            ),
+            caption=caption,
+        )
+
+
+@router.callback_query(F.data.startswith("lang:"))
+async def on_lang_switch(callback: CallbackQuery) -> None:
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        return
+    _, target_code, job_id = parts
+    item = translation_cache.get(job_id)
+    if not item:
+        await callback.answer(
+            "⚠️ Ushbu tarjima muddati o'tgan yoki topilmadi.", show_alert=True
+        )
+        return
+
+    target_name = LANG_NAMES.get(target_code, (target_code.upper(), "🌐"))[0]
+    await callback.answer(f"🔄 {target_name}ga o'girilmoqda...")
+
+    original_text = item.get("original", "")
+    gemini_key = await get_setting("gemini_api_key", DEFAULT_GEMINI_KEY)
+
+    res = await translate_to_language(
+        original_text, target_code, gemini_api_key=gemini_key
+    )
+    new_tr = res["translated"]
+
+    item["translated"] = new_tr
+    item["dst_lang"] = target_code
+
+    src_name = item.get("src_name", "Matn")
+    src_flag = item.get("src_flag", "🌐")
+    dst_name = res.get("dst_name", target_name)
+    dst_flag = res.get("dst_flag", "🌐")
+
+    response_text = (
+        f"{src_flag} <b>{src_name} ➔ {dst_flag} {dst_name}:</b>\n\n"
+        f"<code>{html.escape(new_tr)}</code>"
+    )
+    markup = build_translation_markup(job_id, target_code)
+    try:
+        await callback.message.edit_text(response_text, reply_markup=markup)
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("pdf:"))
+async def on_pdf_action(callback: CallbackQuery) -> None:
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        return
+    _, action, job_id = parts
+    pdf_item = pdf_cache.get(job_id)
+    if not pdf_item:
+        await callback.answer(
+            "⚠️ PDF fayl muddati o'tgan. Iltimos faylni qaytadan yuboring.",
+            show_alert=True,
+        )
+        return
+
+    action_names = {
+        "p10": "Dastlabki 1-10 sahifalar tarjimasi",
+        "sum": "Kitob tahlili va to'liq mazmuni",
+        "ch1": "1-bob tarjimasi",
+        "file": "To'liq o'zbekcha matnli fayl",
+    }
+    desc = action_names.get(action, "Tarjima")
+    await callback.answer(f"⏳ {desc} tayyorlanmoqda, iltimos kuting...")
+
+    status_msg = await callback.message.reply(
+        f"⏳ <b>{desc} tayyorlanmoqda, biroz kuting...</b>"
+    )
+
+    gemini_key = await get_setting("gemini_api_key", DEFAULT_GEMINI_KEY)
+    result_text = await smart_translate_pdf(
+        pdf_item["bytes"], action=action, gemini_api_key=gemini_key
+    )
+
+    if action == "file" or len(result_text) > 4000:
+        doc_bytes = result_text.encode("utf-8")
+        base_name = os.path.splitext(pdf_item.get("name", "kitob"))[0]
+        out_filename = f"{base_name}_Uzbekcha.txt"
+        caption = f"✅ <b>{desc} tayyor!</b>\n📄 Fayl: <code>{out_filename}</code>"
+        await callback.message.reply_document(
+            document=BufferedInputFile(doc_bytes, filename=out_filename),
+            caption=caption,
+        )
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+    else:
+        await status_msg.edit_text(f"📖 <b>{desc}:</b>\n\n{result_text}")
 
 
 @router.inline_query()
