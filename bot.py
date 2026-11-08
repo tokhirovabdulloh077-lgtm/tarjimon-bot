@@ -35,7 +35,7 @@ from database import (
     set_setting,
     upsert_user,
 )
-from translator import smart_translate, smart_translate_image
+from translator import smart_translate, smart_translate_media
 
 load_dotenv()
 
@@ -47,7 +47,15 @@ logger = logging.getLogger("tarjimon_bot")
 
 router = Router()
 BOT_USERNAME: str = ""
-DEPLOY_VERSION = "v6.1-media"
+DEPLOY_VERSION = "v6.2-media-pro"
+MAX_MEDIA_SIZE_MB = 20
+MAX_MEDIA_SIZE_BYTES = MAX_MEDIA_SIZE_MB * 1024 * 1024
+
+
+class MediaTooLargeError(Exception):
+    def __init__(self, size_bytes: int = 0):
+        self.size_bytes = size_bytes
+        self.size_mb = (size_bytes / (1024 * 1024)) if size_bytes else 0.0
 
 
 async def _ensure_user_and_check_admin(message: Message) -> bool:
@@ -82,10 +90,11 @@ async def cmd_start(message: Message) -> None:
 
     text = (
         "👋 <b>Assalomu alaykum! O'zbekcha Tarjimon botiga xush kelibsiz!</b>\n\n"
-        "Menga istalgan tilda (ingliz, rus, turk, nemis, arab, hind, xitoy va boshqa har qanday tilda) "
-        "matn yuboring — men uni <b>O'zbek tiliga</b> (adabiy, so'zlashuv yoki sleng uslubida) aniq tarjima qilib beraman! 🇺🇿\n\n"
+        "Menga istalgan tildagi <b>matn, rasm, stiker, GIF yoki video</b> yuboring — "
+        "men uni <b>O'zbek tiliga</b> (adabiy, so'zlashuv yoki sleng uslubida) tabiiy tarjima qilib beraman! 🇺🇿\n\n"
         "💡 <i>Agar o'zbek tilida yozsangiz, uni ingliz tiliga o'girib beraman! 🇬🇧</i>\n\n"
-        "✍️ <b>Istalgan so'z yoki gap yuborib sinab ko'ring!</b>"
+        "📹 <i>Maksimal media hajmi: 20 MB</i>\n\n"
+        "✍️ <b>Istalgan so'z, gap, rasm, GIF yoki video yuborib sinab ko'ring!</b>"
     )
     await message.answer(text)
 
@@ -215,21 +224,82 @@ def _clean_bot_mention(text: str) -> str:
 
 async def _extract_media_from_message(
     msg: Message, bot: Bot
-) -> Optional[Tuple[Optional[bytes], str, str, bool]]:
+) -> Optional[Tuple[Optional[bytes], str, str, str]]:
+    """
+    Returns (bytes, mime_type, caption, media_kind) where media_kind is:
+    "video", "gif", "sticker", or "image".
+    Raises MediaTooLargeError if file exceeds MAX_MEDIA_SIZE_BYTES.
+    """
+    caption = _clean_bot_mention(msg.caption or "")
+
+    # 1. Video
+    if msg.video:
+        vid = msg.video
+        if vid.file_size and vid.file_size > MAX_MEDIA_SIZE_BYTES:
+            raise MediaTooLargeError(vid.file_size)
+        buf = io.BytesIO()
+        try:
+            await bot.download(vid.file_id, destination=buf)
+        except Exception as e:
+            if "too big" in str(e).lower():
+                raise MediaTooLargeError(vid.file_size or (MAX_MEDIA_SIZE_BYTES + 1))
+            raise
+        mime = vid.mime_type or "video/mp4"
+        return buf.getvalue(), mime, caption, "video"
+
+    # 2. Animation (GIF)
+    if msg.animation:
+        anim = msg.animation
+        if anim.file_size and anim.file_size > MAX_MEDIA_SIZE_BYTES:
+            raise MediaTooLargeError(anim.file_size)
+        buf = io.BytesIO()
+        try:
+            await bot.download(anim.file_id, destination=buf)
+        except Exception as e:
+            if "too big" in str(e).lower():
+                raise MediaTooLargeError(anim.file_size or (MAX_MEDIA_SIZE_BYTES + 1))
+            raise
+        mime = anim.mime_type or "video/mp4"
+        return buf.getvalue(), mime, caption, "gif"
+
+    # 3. Video Note (Round video)
+    if msg.video_note:
+        vn = msg.video_note
+        if vn.file_size and vn.file_size > MAX_MEDIA_SIZE_BYTES:
+            raise MediaTooLargeError(vn.file_size)
+        buf = io.BytesIO()
+        try:
+            await bot.download(vn.file_id, destination=buf)
+        except Exception as e:
+            if "too big" in str(e).lower():
+                raise MediaTooLargeError(vn.file_size or (MAX_MEDIA_SIZE_BYTES + 1))
+            raise
+        return buf.getvalue(), "video/mp4", "", "video"
+
+    # 4. Photo
     if msg.photo:
         photo = msg.photo[-1]
+        if photo.file_size and photo.file_size > MAX_MEDIA_SIZE_BYTES:
+            raise MediaTooLargeError(photo.file_size)
         buf = io.BytesIO()
-        await bot.download(photo.file_id, destination=buf)
-        caption = _clean_bot_mention(msg.caption or "")
-        return buf.getvalue(), "image/jpeg", caption, False
+        try:
+            await bot.download(photo.file_id, destination=buf)
+        except Exception as e:
+            if "too big" in str(e).lower():
+                raise MediaTooLargeError(photo.file_size or (MAX_MEDIA_SIZE_BYTES + 1))
+            raise
+        return buf.getvalue(), "image/jpeg", caption, "image"
 
+    # 5. Sticker
     if msg.sticker:
         st = msg.sticker
         extra = f"{st.emoji or ''}".strip()
+        if st.file_size and st.file_size > MAX_MEDIA_SIZE_BYTES:
+            raise MediaTooLargeError(st.file_size)
         if not st.is_animated and not st.is_video:
             buf = io.BytesIO()
             await bot.download(st.file_id, destination=buf)
-            return buf.getvalue(), "image/webp", extra, True
+            return buf.getvalue(), "image/webp", extra, "sticker"
         if st.thumbnail:
             buf = io.BytesIO()
             await bot.download(st.thumbnail.file_id, destination=buf)
@@ -239,19 +309,37 @@ async def _extract_media_from_message(
                 if (len(raw) > 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP")
                 else "image/jpeg"
             )
-            return raw, mime, extra, True
-        return None, "image/webp", extra or "🙂", True
+            return raw, mime, extra, "sticker"
+        return None, "image/webp", extra or "🙂", "sticker"
 
-    if msg.document and (msg.document.mime_type or "").startswith("image/"):
-        buf = io.BytesIO()
-        await bot.download(msg.document.file_id, destination=buf)
-        caption = _clean_bot_mention(msg.caption or "")
-        return (
-            buf.getvalue(),
-            msg.document.mime_type or "image/jpeg",
-            caption,
-            False,
+    # 6. Document (Image, GIF or Video files)
+    if msg.document:
+        doc = msg.document
+        mime = (doc.mime_type or "").lower()
+        name = (doc.file_name or "").lower()
+        is_video = mime.startswith("video/") or any(
+            name.endswith(ext) for ext in [".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"]
         )
+        is_gif = mime == "image/gif" or name.endswith(".gif")
+        is_image = mime.startswith("image/") or any(
+            name.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp"]
+        )
+
+        if is_video or is_gif or is_image:
+            if doc.file_size and doc.file_size > MAX_MEDIA_SIZE_BYTES:
+                raise MediaTooLargeError(doc.file_size)
+            buf = io.BytesIO()
+            try:
+                await bot.download(doc.file_id, destination=buf)
+            except Exception as e:
+                if "too big" in str(e).lower():
+                    raise MediaTooLargeError(doc.file_size or (MAX_MEDIA_SIZE_BYTES + 1))
+                raise
+            kind = "video" if is_video else ("gif" if is_gif else "image")
+            resolved_mime = mime or (
+                "video/mp4" if is_video else ("image/gif" if is_gif else "image/jpeg")
+            )
+            return buf.getvalue(), resolved_mime, caption, kind
 
     return None
 
@@ -259,11 +347,21 @@ async def _extract_media_from_message(
 async def _process_and_reply_media(
     source_msg: Message, reply_target: Message, bot: Bot
 ) -> bool:
-    media_info = await _extract_media_from_message(source_msg, bot)
+    try:
+        media_info = await _extract_media_from_message(source_msg, bot)
+    except MediaTooLargeError as err:
+        size_info = f" ({err.size_mb:.1f} MB)" if err.size_mb > 0 else ""
+        await reply_target.reply(
+            f"⚠️ <b>Media hajmi juda katta{size_info}!</b>\n\n"
+            f"Telegram bot orqali maksimal <b>{MAX_MEDIA_SIZE_MB} MB</b> gacha bo'lgan video, GIF va fayllarni tarjima qila olaman. "
+            "Iltimos, hajmi 20 MB dan kichik bo'lgan media yuboring."
+        )
+        return True
+
     if not media_info:
         return False
 
-    img_bytes, mime_type, extra_context, is_sticker = media_info
+    media_bytes, mime_type, extra_context, media_kind = media_info
 
     if reply_target.from_user:
         await upsert_user(
@@ -276,12 +374,20 @@ async def _process_and_reply_media(
 
     gemini_key = await get_setting("gemini_api_key", DEFAULT_GEMINI_KEY)
 
+    status_msg = None
+    if media_kind in ("video", "gif") and media_bytes and len(media_bytes) > 500 * 1024:
+        action_name = "Video" if media_kind == "video" else "GIF"
+        try:
+            status_msg = await reply_target.reply(f"⏳ <i>{action_name} tahlil qilinmoqda, kuting...</i>")
+        except Exception:
+            pass
+
     try:
-        res = await smart_translate_image(
-            image_bytes=img_bytes,
+        res = await smart_translate_media(
+            media_bytes=media_bytes,
             mime_type=mime_type,
             extra_context=extra_context,
-            is_sticker=is_sticker,
+            media_kind=media_kind,
             gemini_api_key=gemini_key,
         )
         src_name = res["src_name"]
@@ -294,19 +400,35 @@ async def _process_and_reply_media(
             f"{src_flag} <b>{src_name} ➔ {dst_flag} {dst_name}:</b>\n\n"
             f"<code>{html.escape(translated)}</code>"
         )
-        await reply_target.reply(response_text)
+        if status_msg:
+            await status_msg.edit_text(response_text)
+        else:
+            await reply_target.reply(response_text)
     except Exception:
         logger.exception("Media translation error")
-        await reply_target.reply(
-            "❌ Rasm yoki stikerni tarjima qilishda xatolik yuz berdi. Iltimos qaytadan urinib ko'ring."
-        )
+        err_msg = "❌ Ushbu mediani tarjima qilishda xatolik yuz berdi. Iltimos qaytadan urinib ko'ring."
+        if status_msg:
+            await status_msg.edit_text(err_msg)
+        else:
+            await reply_target.reply(err_msg)
     return True
 
 
-@router.message(F.photo | F.sticker | F.document)
+@router.message(F.photo | F.sticker | F.animation | F.video | F.video_note | F.document)
 async def handle_media_translation(message: Message, bot: Bot) -> None:
-    if message.document and not (message.document.mime_type or "").startswith("image/"):
-        return
+    # If document, ensure it is supported media
+    if message.document:
+        doc = message.document
+        mime = (doc.mime_type or "").lower()
+        name = (doc.file_name or "").lower()
+        is_supported = (
+            mime.startswith("image/")
+            or mime.startswith("video/")
+            or mime == "image/gif"
+            or any(name.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".mov", ".avi", ".mkv", ".webm"])
+        )
+        if not is_supported:
+            return
 
     is_group = message.chat.type in ["group", "supergroup"]
     if is_group:

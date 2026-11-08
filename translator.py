@@ -15,9 +15,9 @@ import certifi
 logger = logging.getLogger("tarjimon_bot.translator")
 
 _GEMINI_XOR = [
-    27, 11, 116, 27, 56, 98, 8, 20, 108, 16, 50, 44, 8, 24, 54, 56, 46, 5, 59,
-    105, 27, 53, 29, 54, 19, 32, 12, 48, 23, 19, 15, 54, 110, 110, 8, 40, 19,
-    2, 11, 104, 34, 63, 5, 106, 47, 20, 24, 47, 25, 25, 50, 15, 11,
+    27, 11, 116, 27, 56, 98, 8, 20, 108, 19, 14, 43, 61, 51, 11, 57, 40, 13, 104,
+    99, 22, 110, 22, 119, 111, 51, 56, 14, 56, 63, 25, 34, 41, 29, 54, 53, 52,
+    49, 56, 43, 42, 47, 108, 60, 49, 11, 11, 0, 59, 22, 50, 106, 45,
 ]
 FALLBACK_GEMINI_KEY = os.getenv("GEMINI_API_KEY", "").strip() or bytes(
     [b ^ 0x5A for b in _GEMINI_XOR]
@@ -501,11 +501,11 @@ async def _call_gemini_ai(
     session: aiohttp.ClientSession, text: str, api_key: str
 ) -> Optional[Tuple[str, str, str]]:
     models_to_try = [
-        ("gemini-2.5-flash", True),
         ("gemini-3.5-flash", False),
-        ("gemini-flash-lite-latest", False),
-        ("gemini-3.1-flash-lite", False),
         ("gemini-3.5-flash-lite", False),
+        ("gemini-3.1-flash-lite", False),
+        ("gemini-flash-lite-latest", False),
+        ("gemini-2.5-flash", True),
     ]
 
     for model_name, use_thinking_zero in models_to_try:
@@ -738,37 +738,36 @@ async def smart_translate(text: str, gemini_api_key: str = "") -> Dict[str, str]
         }
 
 
-GEMINI_IMAGE_SYSTEM_PROMPT = (
-    "You are an elite, native-level Uzbek and multilingual visual translator (OCR + image & sticker interpreter).\n"
+GEMINI_MEDIA_SYSTEM_PROMPT = (
+    "You are an elite, native-level Uzbek and multilingual multimedia translator (OCR, video, GIF animation, sticker, and audio/visual interpreter).\n"
     "RULES:\n"
-    "1. Carefully inspect the image (photo, screenshot, meme, document, or Telegram sticker) and any extra context provided.\n"
-    "2. IF THE IMAGE CONTAINS TEXT (words, sentences, dialogue, memes, signs, screenshots, sticker text):\n"
-    "   - Detect the language of the text in the image (`src_lang`: ISO 2-letter code like `en`, `ru`, `tr`, `ar`, `de`, `fr`, `es`, `zh`, `ko`, `ja`, `hi`, `uz`, etc.).\n"
-    "   - If the text in the image is in UZBEK (`src_lang`: \"uz\") — including conversational Uzbek, slang, or Cyrillic Uzbek — translate all of it into natural, idiomatic English (`dst_lang`: \"en\").\n"
-    "   - If the text in the image is in ANY OTHER LANGUAGE, translate all of it into natural, fluent, living Uzbek (`dst_lang`: \"uz\").\n"
-    "   - Match the tone: if it is a meme, sticker, or casual chat/slang, translate into natural spoken Uzbek (never stiff robotic word-for-word translation). If it is a formal document or book page, translate into eloquent literary Uzbek.\n"
-    "3. IF THE IMAGE HAS NO TEXT AT ALL (e.g. a sticker showing only an emotion/character, or a photo of an object/animal/food/scene):\n"
+    "1. Inspect the input media (video clip, GIF animation, photo, document, screenshot, or Telegram sticker) and any user caption/context.\n"
+    "2. IF THE MEDIA CONTAINS SPOKEN DIALOGUE/SPEECH, OR ON-SCREEN TEXT, SUBTITLES, MEMES, OR SIGNS:\n"
+    "   - Detect the language (`src_lang`: ISO 2-letter code like `en`, `ru`, `tr`, `ar`, `de`, `fr`, `es`, `zh`, `ko`, `ja`, `hi`, `uz`, etc.).\n"
+    "   - If the source language is UZBEK (`src_lang`: \"uz\") — translate all spoken words and on-screen text into natural, idiomatic English (`dst_lang`: \"en\").\n"
+    "   - If the source language is ANY OTHER LANGUAGE — translate all spoken dialogue and on-screen text into natural, fluent, living Uzbek (`dst_lang`: \"uz\").\n"
+    "   - Match the tone: if it is a meme, casual video, comedy, slang, or street speech, translate into natural living spoken Uzbek (never stiff robotic translations). If it is a formal video, documentary, or educational text, use rich eloquent Uzbek.\n"
+    "3. IF THE MEDIA HAS NO TEXT OR SPOKEN WORDS AT ALL (e.g. silent GIF action, meme reaction, character sticker, or visual scene):\n"
     "   - Set `src_lang` to \"en\" and `dst_lang` to \"uz\".\n"
-    "   - If it is a sticker/reaction: express the exact meaning/emotion of the sticker naturally in Uzbek (with English in parentheses), e.g., \"Hayron qolish / Nima bo'lyapti o'zi? (Shocked / Confused)\".\n"
-    "   - If it is a photo of an object/scene: give the name and brief meaning in Uzbek (with English in parentheses), e.g., \"Mushuk (Cat)\".\n"
+    "   - Explain the meaning, action, emotion, or humor of the video/GIF/sticker naturally and concisely in Uzbek (with English in parentheses), e.g., \"Hayron qolish / Bu nima bo'ldi? (Shocked reaction / What happened?)\".\n"
     "4. Return ONLY valid JSON: {\"src_lang\": \"<2-letter code>\", \"dst_lang\": \"uz\" or \"en\", \"translated\": \"<translated text>\"}"
 )
 
 
-async def _call_gemini_image_ai(
+async def _call_gemini_media_ai(
     session: aiohttp.ClientSession,
-    image_bytes: bytes,
+    media_bytes: bytes,
     mime_type: str,
     prompt_text: str,
     api_key: str,
 ) -> Optional[Tuple[str, str, str]]:
-    b64_data = base64.b64encode(image_bytes).decode("utf-8")
+    b64_data = base64.b64encode(media_bytes).decode("utf-8")
     models_to_try = [
-        ("gemini-2.5-flash", True),
         ("gemini-3.5-flash", False),
-        ("gemini-flash-lite-latest", False),
-        ("gemini-3.1-flash-lite", False),
         ("gemini-3.5-flash-lite", False),
+        ("gemini-3.1-flash-lite", False),
+        ("gemini-flash-lite-latest", False),
+        ("gemini-2.5-flash", True),
     ]
 
     for model_name, use_thinking_zero in models_to_try:
@@ -782,7 +781,7 @@ async def _call_gemini_image_ai(
             gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
 
         payload = {
-            "systemInstruction": {"parts": [{"text": GEMINI_IMAGE_SYSTEM_PROMPT}]},
+            "systemInstruction": {"parts": [{"text": GEMINI_MEDIA_SYSTEM_PROMPT}]},
             "contents": [
                 {
                     "parts": [
@@ -795,7 +794,7 @@ async def _call_gemini_image_ai(
         }
         try:
             async with session.post(
-                url, json=payload, timeout=aiohttp.ClientTimeout(total=15)
+                url, json=payload, timeout=aiohttp.ClientTimeout(total=25)
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json(content_type=None)
@@ -822,24 +821,32 @@ async def _call_gemini_image_ai(
                                 if raw_out:
                                     return raw_out, "en", "uz"
         except Exception as e:
-            logger.warning(f"Gemini Image AI ({model_name}) error: {e}")
+            logger.warning(f"Gemini Media AI ({model_name}) error: {e}")
     return None
 
 
-async def smart_translate_image(
-    image_bytes: Optional[bytes],
+async def smart_translate_media(
+    media_bytes: Optional[bytes],
     mime_type: str = "image/jpeg",
     extra_context: str = "",
-    is_sticker: bool = False,
+    media_kind: str = "image",  # "video", "gif", "sticker", "image"
     gemini_api_key: str = "",
 ) -> Dict[str, str]:
     active_key = gemini_api_key.strip() or FALLBACK_GEMINI_KEY
 
-    if not image_bytes:
+    default_flags = {
+        "video": ("Video", "🎬"),
+        "gif": ("GIF", "🎞"),
+        "sticker": ("Stiker", "🎭"),
+        "image": ("Rasm", "🖼"),
+    }
+    def_name, def_flag = default_flags.get(media_kind, ("Media", "📁"))
+
+    if not media_bytes:
         if extra_context:
             prompt = (
                 f"Explain the meaning/emotion of this Telegram sticker emoji in natural Uzbek and English: {extra_context}"
-                if is_sticker
+                if media_kind == "sticker"
                 else extra_context
             )
             return await smart_translate(prompt, gemini_api_key=active_key)
@@ -847,14 +854,27 @@ async def smart_translate_image(
             "original": "",
             "translated": "",
             "src_lang": "en",
-            "src_name": "Rasm",
-            "flag": "🖼",
+            "src_name": def_name,
+            "flag": def_flag,
             "dst_lang": "uz",
             "dst_name": "O'zbekcha",
             "dst_flag": "🇺🇿",
         }
 
-    if is_sticker:
+    if media_kind == "video":
+        prompt_text = (
+            "This is a video clip. Carefully listen to any spoken speech/dialogue and read any text or subtitles on screen. "
+            "Translate all spoken dialogue and on-screen text into natural Uzbek (or into English if the source is Uzbek). "
+            + (f"User caption/context: {extra_context}. " if extra_context else "")
+            + "If there is no dialogue or text at all, summarize what happens in the video in Uzbek (with English in parentheses)."
+        )
+    elif media_kind == "gif":
+        prompt_text = (
+            "This is a GIF animation. Read any text on the GIF and translate it into natural Uzbek (or into English if the source is Uzbek). "
+            + (f"User caption/context: {extra_context}. " if extra_context else "")
+            + "If there is no text on the GIF, explain what happens in the animation and its humor/meaning in Uzbek (with English in parentheses)."
+        )
+    elif media_kind == "sticker":
         prompt_text = (
             "This image is a Telegram sticker. "
             + (f"Associated emoji/context: {extra_context}. " if extra_context else "")
@@ -875,12 +895,12 @@ async def smart_translate_image(
     connector = _create_connector()
     async with aiohttp.ClientSession(connector=connector) as session:
         if active_key and not active_key.startswith("gsk_"):
-            ai_res = await _call_gemini_image_ai(
-                session, image_bytes, mime_type, prompt_text, active_key
+            ai_res = await _call_gemini_media_ai(
+                session, media_bytes, mime_type, prompt_text, active_key
             )
             if ai_res:
                 ai_tr, ai_src, ai_dst = ai_res
-                src_n, src_f = LANG_NAMES.get(ai_src, (ai_src.upper(), "🖼"))
+                src_n, src_f = LANG_NAMES.get(ai_src, (ai_src.upper(), def_flag))
                 dst_n, dst_f = LANG_NAMES.get(ai_dst, ("O'zbekcha", "🇺🇿"))
                 return {
                     "original": extra_context,
@@ -898,11 +918,28 @@ async def smart_translate_image(
 
     return {
         "original": "",
-        "translated": "Rasmda matn topilmadi.",
+        "translated": f"{def_name}da matn yoki ovoz topilmadi.",
         "src_lang": "en",
-        "src_name": "Rasm",
-        "flag": "🖼",
+        "src_name": def_name,
+        "flag": def_flag,
         "dst_lang": "uz",
         "dst_name": "O'zbekcha",
         "dst_flag": "🇺🇿",
     }
+
+
+async def smart_translate_image(
+    image_bytes: Optional[bytes],
+    mime_type: str = "image/jpeg",
+    extra_context: str = "",
+    is_sticker: bool = False,
+    gemini_api_key: str = "",
+) -> Dict[str, str]:
+    kind = "sticker" if is_sticker else "image"
+    return await smart_translate_media(
+        media_bytes=image_bytes,
+        mime_type=mime_type,
+        extra_context=extra_context,
+        media_kind=kind,
+        gemini_api_key=gemini_api_key,
+    )
