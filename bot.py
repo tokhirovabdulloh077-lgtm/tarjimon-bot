@@ -32,13 +32,16 @@ from dotenv import load_dotenv
 
 from database import (
     DEFAULT_GEMINI_KEY,
+    export_full_translation_history,
     get_all_user_ids,
     get_recent_users,
     get_setting,
     get_stats,
+    get_translation_history,
     get_user_languages,
     init_db,
     is_admin,
+    record_translation_history,
     set_setting,
     set_user_native_lang,
     set_user_target_lang,
@@ -64,7 +67,7 @@ logger = logging.getLogger("tarjimon_bot")
 
 router = Router()
 BOT_USERNAME: str = ""
-DEPLOY_VERSION = "v6.4-multilingual-pro"
+DEPLOY_VERSION = "v6.5-history-pro"
 MAX_MEDIA_SIZE_MB = 20
 MAX_MEDIA_SIZE_BYTES = MAX_MEDIA_SIZE_MB * 1024 * 1024
 
@@ -408,10 +411,175 @@ async def cmd_stat(message: Message) -> None:
         f"🔥 <b>Bugun faol bo'lganlar:</b> {stats['today_active']} ta\n"
         f"✨ <b>Bugun yangi qo'shilganlar:</b> {stats['today_new']} ta\n"
         f"🤖 <b>Sun'iy intellekt (AI):</b> {ai_badge}\n\n"
-        "💡 <i>Foydalanuvchilar ro'yxati: /users\n"
-        "E'lon yuborish: /broadcast &lt;matn&gt;</i>"
+        "💡 <b>Admin buyruqlari:</b>\n"
+        "• /history — Jonli tarjimalar tarixi (Monitoring)\n"
+        "• /export_history — Tarixni fayl (.txt) qilib yuklash\n"
+        "• /users — Foydalanuvchilar ro'yxati\n"
+        "• /broadcast &lt;matn&gt; — Barchaga xabar yuborish"
     )
-    await message.reply(text)
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📜 Tarjimalar tarixi", callback_data="hist_page:0"
+                ),
+                InlineKeyboardButton(
+                    text="📥 Fayl qilib olish (.txt)",
+                    callback_data="hist_export",
+                ),
+            ]
+        ]
+    )
+    await message.reply(text, reply_markup=markup)
+
+
+async def build_history_view(
+    page: int = 0, user_filter: str = ""
+) -> Tuple[str, InlineKeyboardMarkup]:
+    per_page = 6
+    offset = page * per_page
+    rows, total = await get_translation_history(
+        limit=per_page, offset=offset, user_filter=user_filter
+    )
+
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = max(0, min(page, total_pages - 1))
+
+    if not rows:
+        text = (
+            "📭 <b>Hozircha yangi tarjimalar tarixi mavjud emas.</b>\n\n"
+            "Foydalanuvchilar botga matn, audio, rasm yoki video yuborishi bilan bu yerda real vaqtda ko'rina boshlaydi!"
+        )
+        markup = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🔄 Yangilash", callback_data="hist_page:0"
+                    )
+                ]
+            ]
+        )
+        return text, markup
+
+    filter_note = (
+        f" (Filtr: <code>{html.escape(user_filter)}</code>)"
+        if user_filter
+        else ""
+    )
+    lines = [
+        f"📜 <b>Jonli Tarjimalar Tarixi{filter_note}</b>\n"
+        f"<i>Jami yozuvlar: {total} ta | Sahifa: {page + 1}/{total_pages}</i>\n"
+    ]
+
+    media_icons = {
+        "text": "💬 Matn",
+        "voice": "🎙 Ovozli xabar",
+        "audio": "🎵 Audio",
+        "image": "🖼 Rasm",
+        "sticker": "🎭 Stiker",
+        "gif": "🎞 GIF",
+        "video": "🎬 Video",
+        "pdf": "📚 PDF Kitob",
+        "button_switch": "🔄 Til almashtirish",
+    }
+
+    for idx, r in enumerate(rows, start=offset + 1):
+        uname = (
+            f"@{r['username']}"
+            if r["username"]
+            else f"<code>ID: {r['user_id']}</code>"
+        )
+        name = html.escape(r["first_name"] or "Nomsiz")
+        kind_label = media_icons.get(r["media_kind"], f"📁 {r['media_kind']}")
+        src_n, src_f = LANG_NAMES.get(
+            r["src_lang"], (r["src_lang"].upper(), "🌐")
+        )
+        dst_n, dst_f = LANG_NAMES.get(
+            r["dst_lang"], (r["dst_lang"].upper(), "🌐")
+        )
+
+        orig_clean = html.escape(r["original_text"] or "")
+        trans_clean = html.escape(r["translated_text"] or "")
+        if len(orig_clean) > 80:
+            orig_clean = orig_clean[:80] + "..."
+        if len(trans_clean) > 80:
+            trans_clean = trans_clean[:80] + "..."
+
+        lines.append(
+            f"<b>{idx}. {name}</b> ({uname})\n"
+            f"   🕒 <i>{r['created_at']}</i> | {kind_label}\n"
+            f"   🌐 {src_f} ➔ {dst_f}\n"
+            f"   📥 <b>Asl:</b> <code>{orig_clean}</code>\n"
+            f"   📤 <b>Tarjima:</b> <code>{trans_clean}</code>\n"
+        )
+
+    nav_row = []
+    if page > 0:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="⬅️ Oldingi", callback_data=f"hist_page:{page - 1}"
+            )
+        )
+    nav_row.append(
+        InlineKeyboardButton(
+            text=f"📄 {page + 1}/{total_pages}", callback_data="noop"
+        )
+    )
+    if page < total_pages - 1:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="Keyingi ➡️", callback_data=f"hist_page:{page + 1}"
+            )
+        )
+
+    bottom_row = [
+        InlineKeyboardButton(
+            text="🔄 Yangilash", callback_data=f"hist_page:{page}"
+        ),
+        InlineKeyboardButton(
+            text="📥 Fayl qilib olish (.txt)", callback_data="hist_export"
+        ),
+    ]
+
+    kb = [nav_row, bottom_row] if nav_row else [bottom_row]
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+@router.message(Command("history", "tarix"))
+async def cmd_history(message: Message) -> None:
+    if not await _ensure_user_and_check_admin(message):
+        await message.reply("🔒 <i>Kechirasiz, bu buyruq faqat bot admini uchun.</i>")
+        return
+
+    parts = message.text.split(maxsplit=1)
+    user_filter = parts[1].strip() if len(parts) > 1 else ""
+
+    text, markup = await build_history_view(page=0, user_filter=user_filter)
+    await message.reply(text, reply_markup=markup)
+
+
+@router.message(Command("export_history", "tarix_fayl"))
+async def cmd_export_history(message: Message) -> None:
+    if not await _ensure_user_and_check_admin(message):
+        await message.reply("🔒 <i>Kechirasiz, bu buyruq faqat bot admini uchun.</i>")
+        return
+
+    status_msg = await message.reply(
+        "⏳ <i>Tarjimalar tarixi fayli tayyorlanmoqda...</i>"
+    )
+    content = await export_full_translation_history(limit=1000)
+    doc_bytes = content.encode("utf-8")
+    now_tag = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+    filename = f"tarjimalar_tarixi_{now_tag}.txt"
+
+    await message.reply_document(
+        document=BufferedInputFile(doc_bytes, filename=filename),
+        caption="✅ <b>Tarjimalar tarixi muvaffaqiyatli yuklandi!</b>",
+    )
+    try:
+        await status_msg.delete()
+    except Exception:
+        pass
 
 
 @router.message(Command("users"))
@@ -803,6 +971,28 @@ async def _process_and_reply_media(
         }
         markup = build_translation_markup(job_id, res.get("dst_lang", "uz"))
 
+        u_id = reply_target.from_user.id if reply_target.from_user else 0
+        u_fn = (
+            reply_target.from_user.first_name or ""
+            if reply_target.from_user
+            else ""
+        )
+        u_un = (
+            reply_target.from_user.username or ""
+            if reply_target.from_user
+            else ""
+        )
+        await record_translation_history(
+            user_id=u_id,
+            first_name=u_fn,
+            username=u_un,
+            src_lang=res.get("src_lang", "auto"),
+            dst_lang=res.get("dst_lang", "uz"),
+            original_text=extra_context or f"[{media_kind}]",
+            translated_text=translated,
+            media_kind=media_kind,
+        )
+
         response_text = (
             f"{src_flag} <b>{src_name} ➔ {dst_flag} {dst_name}:</b>\n\n"
             f"<code>{html.escape(translated)}</code>"
@@ -963,6 +1153,20 @@ async def handle_translation(message: Message, bot: Bot) -> None:
         }
         markup = build_translation_markup(job_id, res.get("dst_lang", "uz"))
 
+        u_id = message.from_user.id if message.from_user else 0
+        u_fn = message.from_user.first_name or "" if message.from_user else ""
+        u_un = message.from_user.username or "" if message.from_user else ""
+        await record_translation_history(
+            user_id=u_id,
+            first_name=u_fn,
+            username=u_un,
+            src_lang=res.get("src_lang", "auto"),
+            dst_lang=res.get("dst_lang", "uz"),
+            original_text=text,
+            translated_text=translated,
+            media_kind="text",
+        )
+
         response_text = (
             f"{src_flag} <b>{src_name} ➔ {dst_flag} {dst_name}:</b>\n\n"
             f"<code>{html.escape(translated)}</code>"
@@ -1063,6 +1267,20 @@ async def on_lang_switch(callback: CallbackQuery) -> None:
     except Exception:
         pass
 
+    u_id = callback.from_user.id if callback.from_user else 0
+    u_fn = callback.from_user.first_name or "" if callback.from_user else ""
+    u_un = callback.from_user.username or "" if callback.from_user else ""
+    await record_translation_history(
+        user_id=u_id,
+        first_name=u_fn,
+        username=u_un,
+        src_lang=item.get("src_lang", "auto"),
+        dst_lang=target_code,
+        original_text=original_text,
+        translated_text=new_tr,
+        media_kind="button_switch",
+    )
+
 
 @router.callback_query(F.data.startswith("pdf:"))
 async def on_pdf_action(callback: CallbackQuery) -> None:
@@ -1112,10 +1330,60 @@ async def on_pdf_action(callback: CallbackQuery) -> None:
     else:
         await status_msg.edit_text(f"📖 <b>{desc}:</b>\n\n{result_text}")
 
+    u_id = callback.from_user.id if callback.from_user else 0
+    u_fn = callback.from_user.first_name or "" if callback.from_user else ""
+    u_un = callback.from_user.username or "" if callback.from_user else ""
+    await record_translation_history(
+        user_id=u_id,
+        first_name=u_fn,
+        username=u_un,
+        src_lang="auto",
+        dst_lang="uz",
+        original_text=f"PDF ({desc}): {pdf_item.get('name', 'kitob')}",
+        translated_text=result_text[:400] + "...",
+        media_kind="pdf",
+    )
+
 
 @router.callback_query(F.data == "noop")
 async def on_noop(callback: CallbackQuery) -> None:
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("hist_page:"))
+async def on_hist_page(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id if callback.from_user else 0
+    if not await is_admin(user_id=user_id):
+        await callback.answer("🔒 Faqat bot admini uchun.", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    page = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    text, markup = await build_history_view(page=page)
+    try:
+        await callback.message.edit_text(text, reply_markup=markup)
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data == "hist_export")
+async def on_hist_export(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id if callback.from_user else 0
+    if not await is_admin(user_id=user_id):
+        await callback.answer("🔒 Faqat bot admini uchun.", show_alert=True)
+        return
+
+    await callback.answer("📥 Fayl tayyorlanmoqda...")
+    content = await export_full_translation_history(limit=1000)
+    doc_bytes = content.encode("utf-8")
+    now_tag = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+    filename = f"tarjimalar_tarixi_{now_tag}.txt"
+
+    await callback.message.reply_document(
+        document=BufferedInputFile(doc_bytes, filename=filename),
+        caption="✅ <b>Tarjimalar tarixi fayl ko'rinishida yuklandi!</b>",
+    )
 
 
 @router.callback_query(F.data.startswith("lang_menu:"))

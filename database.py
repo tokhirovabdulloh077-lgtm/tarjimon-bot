@@ -86,6 +86,26 @@ def _init_db_sync() -> None:
                 value TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS translations_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                first_name TEXT,
+                username TEXT,
+                src_lang TEXT,
+                dst_lang TEXT,
+                original_text TEXT,
+                translated_text TEXT,
+                media_kind TEXT DEFAULT 'text',
+                created_at TEXT
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_hist_uid ON translations_history (user_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_hist_time ON translations_history (created_at)"
+        )
         cur = conn.cursor()
         cur.execute("PRAGMA table_info(users)")
         cols = [r["name"] for r in cur.fetchall()]
@@ -117,7 +137,14 @@ def _export_state_sync() -> Dict:
         users = [dict(r) for r in cur.fetchall()]
         cur.execute("SELECT key, value FROM settings")
         settings = {r["key"]: r["value"] for r in cur.fetchall()}
-        return {"users": users, "settings": settings}
+        cur.execute("""
+            SELECT user_id, first_name, username, src_lang, dst_lang,
+                   original_text, translated_text, media_kind, created_at
+            FROM translations_history
+            ORDER BY id DESC LIMIT 100
+        """)
+        history = [dict(r) for r in cur.fetchall()]
+        return {"users": users, "settings": settings, "history": history}
 
 
 def _import_state_sync(data: Dict) -> None:
@@ -186,6 +213,34 @@ def _import_state_sync(data: Dict) -> None:
                     cur.execute(
                         "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
                         (str(k), str(v)),
+                    )
+        history = data.get("history", [])
+        if isinstance(history, list):
+            for h in history:
+                if not isinstance(h, dict) or "user_id" not in h:
+                    continue
+                cur.execute(
+                    "SELECT id FROM translations_history WHERE user_id = ? AND created_at = ? LIMIT 1",
+                    (h["user_id"], str(h.get("created_at") or "")),
+                )
+                if not cur.fetchone():
+                    cur.execute(
+                        """
+                        INSERT INTO translations_history 
+                        (user_id, first_name, username, src_lang, dst_lang, original_text, translated_text, media_kind, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            h["user_id"],
+                            str(h.get("first_name") or ""),
+                            str(h.get("username") or ""),
+                            str(h.get("src_lang") or ""),
+                            str(h.get("dst_lang") or ""),
+                            str(h.get("original_text") or "")[:2000],
+                            str(h.get("translated_text") or "")[:2000],
+                            str(h.get("media_kind") or "text"),
+                            str(h.get("created_at") or ""),
+                        ),
                     )
         # Ensure default Gemini API key is always present
         cur.execute("SELECT value FROM settings WHERE key = 'gemini_api_key'")
@@ -547,3 +602,144 @@ def _get_all_user_ids_sync() -> List[int]:
 
 async def get_all_user_ids() -> List[int]:
     return await asyncio.to_thread(_get_all_user_ids_sync)
+
+
+def _get_tashkent_time_str() -> str:
+    tz = datetime.timezone(datetime.timedelta(hours=5))
+    return datetime.datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _record_translation_history_sync(
+    user_id: int,
+    first_name: str,
+    username: str,
+    src_lang: str,
+    dst_lang: str,
+    original_text: str,
+    translated_text: str,
+    media_kind: str = "text",
+) -> None:
+    now_str = _get_tashkent_time_str()
+    with _get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO translations_history 
+            (user_id, first_name, username, src_lang, dst_lang, original_text, translated_text, media_kind, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                first_name[:100],
+                username[:100],
+                src_lang[:10],
+                dst_lang[:10],
+                original_text[:2000],
+                translated_text[:2000],
+                media_kind[:20],
+                now_str,
+            ),
+        )
+        conn.commit()
+
+
+async def record_translation_history(
+    user_id: int,
+    first_name: str,
+    username: str,
+    src_lang: str,
+    dst_lang: str,
+    original_text: str,
+    translated_text: str,
+    media_kind: str = "text",
+) -> None:
+    await asyncio.to_thread(
+        _record_translation_history_sync,
+        user_id,
+        first_name,
+        username,
+        src_lang,
+        dst_lang,
+        original_text,
+        translated_text,
+        media_kind,
+    )
+    schedule_cloud_sync()
+
+
+def _get_translation_history_sync(
+    limit: int = 15, offset: int = 0, user_filter: str = ""
+) -> Tuple[List[Dict], int]:
+    with _get_connection() as conn:
+        cur = conn.cursor()
+        filter_sql = ""
+        params = []
+        if user_filter:
+            uf = user_filter.strip().lstrip("@")
+            if uf.isdigit():
+                filter_sql = "WHERE user_id = ?"
+                params.append(int(uf))
+            else:
+                filter_sql = "WHERE username LIKE ? OR first_name LIKE ?"
+                params.extend([f"%{uf}%", f"%{uf}%"])
+
+        cur.execute(
+            f"SELECT COUNT(*) as total FROM translations_history {filter_sql}",
+            params,
+        )
+        total = cur.fetchone()["total"]
+
+        query = f"""
+            SELECT id, user_id, first_name, username, src_lang, dst_lang,
+                   original_text, translated_text, media_kind, created_at
+            FROM translations_history
+            {filter_sql}
+            ORDER BY id DESC
+            LIMIT ? OFFSET ?
+        """
+        cur.execute(query, params + [limit, offset])
+        rows = [dict(r) for r in cur.fetchall()]
+        return rows, total
+
+
+async def get_translation_history(
+    limit: int = 15, offset: int = 0, user_filter: str = ""
+) -> Tuple[List[Dict], int]:
+    return await asyncio.to_thread(
+        _get_translation_history_sync, limit, offset, user_filter
+    )
+
+
+def _export_full_translation_history_sync(limit: int = 500) -> str:
+    with _get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, user_id, first_name, username, src_lang, dst_lang,
+                   original_text, translated_text, media_kind, created_at
+            FROM translations_history
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        if not rows:
+            return "Hozircha tarjimalar tarixi mavjud emas."
+
+        lines = [
+            f"=== TARJIMA BOT TARIXI (Jami: {len(rows)} ta oxirgi yozuvlar) ===\n"
+        ]
+        for r in rows:
+            uname = f"@{r['username']}" if r["username"] else "mavjud emas"
+            lines.append(
+                f"[{r['created_at']}] ID: {r['user_id']} | {r['first_name']} ({uname})\n"
+                f"Turi: {r['media_kind']} | Yo'nalish: {r['src_lang']} -> {r['dst_lang']}\n"
+                f"Asl matn: {r['original_text']}\n"
+                f"Tarjima: {r['translated_text']}\n"
+                f"--------------------------------------------------\n"
+            )
+        return "\n".join(lines)
+
+
+async def export_full_translation_history(limit: int = 500) -> str:
+    return await asyncio.to_thread(_export_full_translation_history_sync, limit)
